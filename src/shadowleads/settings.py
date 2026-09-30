@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     output_dir: Path = Field(Path("output"), validation_alias=_alias("SHADOWLEADS_OUTPUT_DIR"))
     user_agent: str = "shadowleads/0.1 (VMI lead-list research prototype)"
 
-    google_maps_api_key: SecretStr | None = Field(None, validation_alias=_alias("GOOGLE_MAPS_API_KEY"))
+    google_maps_api_key: SecretStr | None = Field(
+        None, validation_alias=_alias("GOOGLE_MAPS_API_KEY")
+    )
     # Hard cap of billable Google calls per SKU per calendar month (free tier is 1,000).
     google_budget: int = Field(900, validation_alias=_alias("SHADOWLEADS_GOOGLE_BUDGET"))
 

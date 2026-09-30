@@ -20,7 +20,9 @@ RunMonth = Annotated[str, cyclopts.Parameter(help="Run month YYYY-MM (default: c
 
 
 @app.meta.default
-def _meta(*tokens: Annotated[str, cyclopts.Parameter(show=False, allow_leading_hyphen=True)]) -> None:
+def _meta(
+    *tokens: Annotated[str, cyclopts.Parameter(show=False, allow_leading_hyphen=True)],
+) -> None:
     configure_logging()
     app(tokens)
 
@@ -35,7 +37,9 @@ def fetch_official(run_month: RunMonth | None = None, *, skip_register: bool = F
     this_year = date.today().year
     with session(s.db_path) as con, PoliteClient(s.user_agent, min_interval=1.5) as client:
         official.fetch_jar(con, client, s.raw_dir, month)
-        official.fetch_sodra(con, client, s.raw_dir, month, years=[this_year - 2, this_year - 1, this_year])
+        official.fetch_sodra(
+            con, client, s.raw_dir, month, years=[this_year - 2, this_year - 1, this_year]
+        )
         official.fetch_vmi_taxes(con, client, s.raw_dir, month, since_year=this_year - 2)
         if not skip_register:
             official.fetch_vmi_register(con, client, s.raw_dir, month)
@@ -47,7 +51,9 @@ def fetch_google(
     *,
     bbox: Annotated[
         tuple[float, float, float, float] | None,
-        cyclopts.Parameter(help="south west north east; default = Vilnius. Use a small box for dev."),
+        cyclopts.Parameter(
+            help="south west north east; default = Vilnius. Use a small box for dev."
+        ),
     ] = None,
 ) -> None:
     """Sweep Google Places (Nearby Search, quadtree) and stage a place snapshot."""

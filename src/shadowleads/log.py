@@ -10,7 +10,9 @@ import structlog
 
 def configure_logging(level: str = "INFO") -> None:
     renderer: structlog.types.Processor = (
-        structlog.dev.ConsoleRenderer() if sys.stderr.isatty() else structlog.processors.JSONRenderer()
+        structlog.dev.ConsoleRenderer()
+        if sys.stderr.isatty()
+        else structlog.processors.JSONRenderer()
     )
     structlog.configure(
         processors=[
