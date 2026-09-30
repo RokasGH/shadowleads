@@ -19,6 +19,9 @@ class Category:
     evrk_prefixes: tuple[str, ...]
     # Words that describe the category rather than the business (stripped before name matching).
     generic_words: tuple[str, ...]
+    # Sub-types Google returns for the requested types (e.g. gastropub under bar). Used only to
+    # classify results - not sent in requests, so the response cache stays valid.
+    also_classify: tuple[str, ...] = ()
 
 
 CATEGORIES: dict[str, Category] = {
@@ -50,6 +53,7 @@ CATEGORIES: dict[str, Category] = {
                 "kokteiliu", "cocktail", "vyno", "wine", "alaus", "beer", "restoranas", "restaurant",
                 "kavine", "cafe", "lounge", "karaoke", "bistro", "grill",
             ),
+            also_classify=("gastropub", "irish_pub", "brewpub", "beer_garden", "hookah_bar"),
         ),
         Category(
             key="auto",
@@ -61,6 +65,7 @@ CATEGORIES: dict[str, Category] = {
                 "plovykla", "plovimas", "savitarnos", "savitarna", "car", "wash", "remontas",
                 "padangos", "padangu", "kebulu", "dazymas", "vilniuje", "vilnius", "centras",
             ),
+            also_classify=("tire_shop",),
         ),
     )
 }  # fmt: skip
@@ -72,6 +77,11 @@ SELF_SERVICE_MARKERS = ("savitarn", "self service", "self-service", "selfservice
 COMMON_GENERIC_WORDS = (
     "uab", "mb", "ii", "vsi", "ab", "lt", "vilnius", "vilniuje", "vilniaus", "lietuva",
     "the", "and", "ir", "de", "la", "by", "nr", "g",
+    # VMI branch descriptors ("Biuras", "Parduotuvė", ...) that are not business names
+    "biuras", "parduotuve", "dirbtuves", "garazas", "cechas", "kabinetas", "paviljonas", "namai",
+    "patalpa", "patalpos", "sandelis", "padalinys", "filialas", "gamybine", "prekybos", "vieta",
+    "taskas", "kioskas", "remonto", "paslaugu", "paslaugos", "buveine", "administracija",
+    "autoplovykla", "gamyba", "cechas", "biuro", "pastatas", "salone",
 )  # fmt: skip
 
 
@@ -79,7 +89,7 @@ def category_for_primary_type(primary_type: str | None) -> str | None:
     if not primary_type:
         return None
     for cat in CATEGORIES.values():
-        if primary_type in cat.google_primary_types:
+        if primary_type in cat.google_primary_types or primary_type in cat.also_classify:
             return cat.key
     return None
 

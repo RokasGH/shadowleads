@@ -28,7 +28,9 @@ def _meta(
 
 
 @app.command
-def fetch_official(run_month: RunMonth | None = None, *, skip_register: bool = False) -> None:
+def fetch_official(
+    run_month: RunMonth | None = None, *, skip_register: bool = False, only_revenue: bool = False
+) -> None:
     """Download JAR, Sodra and VMI bulk data and stage it."""
     from shadowleads.sources import official
 
@@ -36,6 +38,9 @@ def fetch_official(run_month: RunMonth | None = None, *, skip_register: bool = F
     month = run_month or current_run_month()
     this_year = date.today().year
     with session(s.db_path) as con, PoliteClient(s.user_agent, min_interval=1.5) as client:
+        if only_revenue:
+            official.fetch_revenue(con, client, s.raw_dir, month, since_fy=this_year - 3)
+            return
         official.fetch_jar(con, client, s.raw_dir, month)
         official.fetch_sodra(
             con, client, s.raw_dir, month, years=[this_year - 2, this_year - 1, this_year]
@@ -43,6 +48,7 @@ def fetch_official(run_month: RunMonth | None = None, *, skip_register: bool = F
         official.fetch_vmi_taxes(con, client, s.raw_dir, month, since_year=this_year - 2)
         if not skip_register:
             official.fetch_vmi_register(con, client, s.raw_dir, month)
+        official.fetch_revenue(con, client, s.raw_dir, month, since_fy=this_year - 3)
 
 
 @app.command
@@ -71,6 +77,166 @@ def fetch_google(
         manifest = collector.sweep(bbox or VILNIUS_BBOX, all_primary_types())
         load_snapshot(con, cache_dir, manifest, month)
         log.info("google.calls_this_month", calls=collector.calls_this_billing_month())
+
+
+@app.command
+def link(run_month: RunMonth | None = None) -> None:
+    """Build entity + place models and link Google places to legal entities (primary rules)."""
+    from shadowleads.db import run_sql_file
+    from shadowleads.linking.matcher import run_primary_linking
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path) as con:
+        run_sql_file(con, "core_entity.sql")
+        run_sql_file(con, "core_place.sql", run_month=month)
+        run_primary_linking(con, month)
+
+
+@app.command
+def fetch_websites(run_month: RunMonth | None = None, *, workers: int = 12) -> None:
+    """Scan businesses' own websites for self-declared company / VAT codes."""
+    from shadowleads.db import record_fetch
+    from shadowleads.sources.websites import scan_sites
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    out = s.raw_dir / "websites" / month / "codes.jsonl"
+    with session(s.db_path) as con:
+        places = con.execute(
+            "SELECT place_id, website FROM core.place_snapshot "
+            "WHERE run_month = ? AND in_scope AND website IS NOT NULL",
+            [month],
+        ).fetchall()
+    rows = scan_sites(places, s.user_agent, s.raw_dir / "websites" / month / "pages", out, workers)
+    with session(s.db_path) as con:
+        record_fetch(
+            con,
+            source="websites",
+            url="(business websites)",
+            path=out,
+            run_month=month,
+            row_count=rows,
+        )
+        con.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS stg.website_code (
+                run_month VARCHAR, place_id VARCHAR, site VARCHAR, page_url VARCHAR,
+                code_type VARCHAR, code VARCHAR, context VARCHAR, fetched_at TIMESTAMP);
+            DELETE FROM stg.website_code WHERE run_month = '{month}';
+            INSERT INTO stg.website_code
+            SELECT '{month}', place_id, coalesce(site, 'https://' || host), page_url, code_type, code,
+                   context, CAST(fetched_at AS TIMESTAMPTZ)::TIMESTAMP
+            FROM read_json('{out}', format='newline_delimited', columns={{
+                'place_id':'VARCHAR','site':'VARCHAR','host':'VARCHAR','page_url':'VARCHAR',
+                'code_type':'VARCHAR','code':'VARCHAR','context':'VARCHAR','fetched_at':'VARCHAR'}})
+            """
+        )
+    log.info("websites.done", codes=rows, places=len(places))
+
+
+@app.command
+def fetch_vmvt(run_month: RunMonth | None = None) -> None:
+    """Fetch VMVT food-business premises in Vilnius (nightlife linking evidence)."""
+    from shadowleads.sources.vmvt import fetch_vmvt
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path) as con, PoliteClient(s.user_agent, min_interval=2.0) as client:
+        n = fetch_vmvt(con, client, s.raw_dir, month)
+    log.info("vmvt.done", rows=n)
+
+
+@app.command
+def fetch_serp(
+    run_month: RunMonth | None = None,
+    *,
+    fallback_n: int = 200,
+    validation_n: int = 100,
+    min_reviews: int = 30,
+) -> None:
+    """Oxylabs Google-search lookups of company codes: busiest unresolved places + a random
+    validation sample of primary links."""
+    from shadowleads.linking.fallback import serp_targets
+    from shadowleads.sources.oxylabs import SerpClient, run_serp_lookups
+
+    s = get_settings()
+    if not s.has_oxylabs or s.oxylabs_password is None or s.oxylabs_username is None:
+        raise SystemExit("OXYLABS_USERNAME / OXYLABS_PASSWORD are not set")
+    month = run_month or current_run_month()
+    with session(s.db_path) as con:
+        targets = serp_targets(
+            con, month, fallback_n=fallback_n, validation_n=validation_n, min_reviews=min_reviews
+        )
+        client = SerpClient(
+            con,
+            username=s.oxylabs_username,
+            password=s.oxylabs_password.get_secret_value(),
+            api_url=s.oxylabs_api_url,
+            geo_location=s.oxylabs_geo_location,
+            cache_dir=s.raw_dir / "serp" / month,
+            run_month=month,
+            budget=s.oxylabs_budget,
+        )
+        rows = run_serp_lookups(client, targets)
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS stg.serp_code (
+                run_month VARCHAR, place_id VARCHAR, purpose VARCHAR, query VARCHAR,
+                code VARCHAR, hits INTEGER)"""
+        )
+        con.execute("DELETE FROM stg.serp_code WHERE run_month = ?", [month])
+        if rows:
+            con.executemany(
+                "INSERT INTO stg.serp_code VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    [month, r["place_id"], r["purpose"], r["query"], r["code"], r["hits"]]
+                    for r in rows
+                ],
+            )
+        log.info("serp.done", targets=len(targets), rows=len(rows), calls=client.calls_this_run())
+
+
+@app.command
+def link_fallback(run_month: RunMonth | None = None) -> None:
+    """Resolve ambiguous/unmatched places with independent code evidence; cross-check links."""
+    from shadowleads.linking.fallback import run_fallback
+
+    s = get_settings()
+    with session(s.db_path) as con:
+        run_fallback(con, run_month or current_run_month())
+
+
+@app.command
+def validate(run_month: RunMonth | None = None) -> None:
+    """Link validation (V1-V4) and the entity-activity mart."""
+    from shadowleads.db import run_sql_file
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    labels = Path("labels/match_audit.csv")
+    with session(s.db_path) as con:
+        if labels.exists():
+            con.execute(
+                "CREATE OR REPLACE TABLE core.link_audit_label AS "
+                "SELECT * FROM read_csv(?, header=true, columns={'place_id':'VARCHAR',"
+                "'ja_kodas':'BIGINT','verdict':'VARCHAR','auditor':'VARCHAR',"
+                "'audited_on':'DATE','note':'VARCHAR'}) WHERE verdict IN ('correct', 'wrong')",
+                [str(labels)],
+            )
+        run_sql_file(con, "core_link_validation.sql", run_month=month)
+        run_sql_file(con, "mart_entity_activity.sql", run_month=month)
+
+
+@app.command
+def report(run_month: RunMonth | None = None) -> None:
+    """Write output/<month>/coverage.md (Milestone-1 checkpoint)."""
+    from shadowleads.report import coverage_report
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path, read_only=True) as con:
+        path = coverage_report(con, month, s.output_dir / month)
+    log.info("report.written", path=str(path))
 
 
 @app.command

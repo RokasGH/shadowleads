@@ -41,7 +41,7 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "PTH"]
-ignore = ["RUF001", "RUF002", "RUF003"]  # Lithuanian text contains ambiguous-looking unicode
+ignore = ["RUF001", "RUF002", "RUF003", "E501"]  # Lithuanian unicode; line length is left to the formatter
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,31 +1,38 @@
 """Primary linking: Google place -> legal entity by full name and/or address.
 
-Rules (in order, per place):
-  1. Full-name match: the place's normalised full name equals the key of exactly one entity
-     (VMI Vilnius branch trade name or JAR legal-name core).
-       - registered/premises address agrees  -> HIGH
-       - no address agreement                -> MEDIUM
-     Several entities share the name -> keep those whose address agrees; exactly one -> HIGH.
-  2. Name-part match (a separator-delimited part of the Google name, e.g. "GoGlass" in
-     "Automobilių stiklai | GoGlass, UAB"): exactly one entity AND address agrees -> MEDIUM.
-  3. Address-only: exactly one active, category-consistent entity at that address, and the
-     address is not a multi-tenant hotspot -> MEDIUM.
-  Otherwise the place is left `ambiguous` / `unmatched` for the fallback stage.
-
-Fuzzy similarity never creates a link; it is only recorded as evidence for validation.
+Rules, per place (first that fires wins):
+  1. Exact full name - the Google name equals an entity's JAR legal name or VMI Vilnius branch
+     trade name after removing only the legal form, punctuation and city words.
+       unique entity -> HIGH if address agrees or activity (EVRK) fits the category, else MEDIUM
+  2. Core name - same comparison after also removing generic words ("Bromas Baras" ~ "Bromas").
+     Must be corroborated:
+       address agrees                                   -> HIGH
+       name is distinctive AND activity fits category   -> MEDIUM
+       otherwise                                        -> ambiguous (sent to fallbacks)
+  3. Name part ("GoGlass" in "Automobilių stiklai | GoGlass, UAB") + address agrees -> MEDIUM
+  4. Address only - exactly one active, category-consistent entity registered at the address and
+     the address is not multi-tenant -> MEDIUM
+Several entities matching a name are narrowed by address, then by activity; if that does not leave
+exactly one, the place is `ambiguous`. Fuzzy similarity never creates a link (evidence only).
 """
 
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 
 import duckdb
 from rapidfuzz import fuzz
 
 from shadowleads.categories import evrk_matches
-from shadowleads.linking.normalize import name_key, name_variants, parse_lt_address, parse_street
+from shadowleads.linking.normalize import (
+    exact_key,
+    name_key,
+    name_variants,
+    parse_lt_address,
+    parse_street,
+)
 from shadowleads.log import get_logger
 
 log = get_logger(__name__)
@@ -34,6 +41,8 @@ log = get_logger(__name__)
 MULTI_TENANT_ENTITIES = 5
 # More Google places of our categories than this at one address = shopping centre, etc.
 MULTI_TENANT_PLACES = 1
+# A name token shared by more registered names than this is a dictionary word, not a brand.
+DISTINCTIVE_MAX_DF = 8
 
 
 @dataclass(slots=True)
@@ -50,7 +59,7 @@ class Candidate:
     ja_kodas: int
     source: str  # vmi_branch_name | jar_legal_name | jar_address
     matched_key: str
-    via: str  # full_name | name_part | address
+    via: str  # exact_name | core_name | name_part | address
     address_agrees: bool = False
     evrk_consistent: bool = False
     vilnius_nexus: bool = False
@@ -73,14 +82,14 @@ class EntityIndex:
 
     def __init__(self, con: duckdb.DuckDBPyConnection):
         self.entities: dict[int, EntityRef] = {}
-        self.by_name: dict[str, set[tuple[int, str]]] = defaultdict(set)
+        self.by_exact: dict[str, set[tuple[int, str]]] = defaultdict(set)
+        self.by_core: dict[str, set[tuple[int, str]]] = defaultdict(set)
         self.by_address: dict[str, set[int]] = defaultdict(set)
+        self.token_df: Counter[str] = Counter()
 
         rows = con.execute(
-            """
-            SELECT ja_kodas, legal_name, registered_address, evrk_codes, vilnius_nexus
-            FROM core.entity WHERE is_active
-            """
+            "SELECT ja_kodas, legal_name, registered_address, evrk_codes, vilnius_nexus "
+            "FROM core.entity WHERE is_active"
         ).fetchall()
         for ja, legal_name, address, evrk_codes, nexus in rows:
             addr = parse_lt_address(address)
@@ -88,26 +97,36 @@ class EntityIndex:
                 ja, legal_name, addr.key if addr else None, tuple(evrk_codes or ()), nexus
             )
             self.entities[ja] = ref
+            self.token_df.update(set(exact_key(legal_name).split()))
             if ref.address_key:
                 self.by_address[ref.address_key].add(ja)
             if nexus:
-                key = name_key(legal_name)
-                if key:
-                    self.by_name[key].add((ja, "jar_legal_name"))
+                self._add_name(ja, legal_name, "jar_legal_name")
 
         for ja, branch_name in con.execute(
             "SELECT DISTINCT ja_kodas, branch_name FROM core.entity_branch "
             "WHERE in_vilnius AND is_current AND branch_name IS NOT NULL"
         ).fetchall():
-            key = name_key(branch_name)
-            if key and ja in self.entities:
-                self.by_name[key].add((ja, "vmi_branch_name"))
+            if ja in self.entities:
+                self._add_name(ja, branch_name, "vmi_branch_name")
         log.info(
             "index.built",
             entities=len(self.entities),
-            name_keys=len(self.by_name),
+            exact_keys=len(self.by_exact),
+            core_keys=len(self.by_core),
             address_keys=len(self.by_address),
         )
+
+    def _add_name(self, ja: int, name: str, source: str) -> None:
+        if key := exact_key(name):
+            self.by_exact[key].add((ja, source))
+        if key := name_key(name):
+            self.by_core[key].add((ja, source))
+
+    def distinctive(self, key: str) -> bool:
+        """A core key is distinctive if it has 2+ tokens or its token is rare among JAR names."""
+        tokens = key.split()
+        return len(tokens) >= 2 or all(self.token_df[t] <= DISTINCTIVE_MAX_DF for t in tokens)
 
 
 def _candidate(
@@ -136,6 +155,23 @@ def _by_entity(cands: list[Candidate]) -> dict[int, list[Candidate]]:
     return out
 
 
+def _narrow(
+    grouped: dict[int, list[Candidate]], *, need_distinctive: bool, distinctive: bool
+) -> tuple[int | None, str]:
+    """Pick one entity out of several name matches: by address, then by activity."""
+    by_addr = [ja for ja, cs in grouped.items() if any(c.address_agrees for c in cs)]
+    if len(by_addr) == 1:
+        return by_addr[0], "address"
+    if by_addr:
+        return None, f"{len(by_addr)} same-name entities at this address"
+    if need_distinctive and not distinctive:
+        return None, "generic name, no address agreement"
+    by_evrk = [ja for ja, cs in grouped.items() if any(c.evrk_consistent for c in cs)]
+    if len(by_evrk) == 1:
+        return by_evrk[0], "activity"
+    return None, f"{len(grouped)} entities share the name" if len(by_evrk) != 1 else ""
+
+
 def decide(
     index: EntityIndex,
     place_id: str,
@@ -149,51 +185,61 @@ def decide(
     address_key = addr.key if addr else None
     variants = name_variants(name)
 
-    def lookup(keys: list[str], via: str) -> list[Candidate]:
+    def lookup(
+        table: dict[str, set[tuple[int, str]]], keys: list[str], via: str
+    ) -> list[Candidate]:
         return [
             _candidate(index, ja, src, k, via, category, address_key, name)
             for k in keys
-            for ja, src in sorted(index.by_name.get(k, ()))
+            for ja, src in sorted(table.get(k, ()))
         ]
 
-    # 1. full name
-    full = lookup(variants[:1], "full_name")
-    if full:
-        grouped = _by_entity(full)
+    # 1. exact full name
+    exact = lookup(index.by_exact, [k for k in [exact_key(name)] if k], "exact_name")
+    if exact:
+        grouped = _by_entity(exact)
         if len(grouped) == 1:
             ((ja, cands),) = grouped.items()
-            agrees = any(c.address_agrees for c in cands)
+            strong = any(c.address_agrees or c.evrk_consistent for c in cands)
             return LinkDecision(
-                place_id, "linked", ja, "name_full" + ("+address" if agrees else ""),
-                "HIGH" if agrees else "MEDIUM", "unique full-name match", full,
+                place_id, "linked", ja, "exact_name", "HIGH" if strong else "MEDIUM",
+                "unique exact full-name match", exact,
             )  # fmt: skip
-        agreeing = {ja for ja, cs in grouped.items() if any(c.address_agrees for c in cs)}
-        if len(agreeing) == 1:
-            ja = agreeing.pop()
+        ja, how = _narrow(grouped, need_distinctive=False, distinctive=True)
+        if ja is not None:
             return LinkDecision(
-                place_id, "linked", ja, "name_full+address", "HIGH",
-                f"{len(grouped)} entities share the name; address singles one out", full,
+                place_id, "linked", ja, f"exact_name+{how}", "HIGH",
+                f"{len(grouped)} entities share the name; {how} singles one out", exact,
+            )  # fmt: skip
+        return LinkDecision(place_id, "ambiguous", reason=how, candidates=exact)
+
+    # 2. core name (generic words removed) - needs corroboration
+    core = lookup(index.by_core, variants[:1], "core_name")
+    if core:
+        grouped = _by_entity(core)
+        distinctive = index.distinctive(variants[0])
+        ja, how = _narrow(grouped, need_distinctive=True, distinctive=distinctive)
+        if ja is not None:
+            return LinkDecision(
+                place_id, "linked", ja, f"core_name+{how}",
+                "HIGH" if how == "address" else "MEDIUM",
+                f"core-name match corroborated by {how}", core,
             )  # fmt: skip
         return LinkDecision(
-            place_id,
-            "ambiguous",
-            reason=f"{len(grouped)} entities share the full name",
-            candidates=full,
+            place_id, "ambiguous", reason=how or "core name not corroborated", candidates=core
         )
 
-    # 2. name parts
-    parts = lookup(variants[1:], "name_part")
-    if parts:
-        grouped = _by_entity(parts)
-        agreeing = {ja for ja, cs in grouped.items() if any(c.address_agrees for c in cs)}
-        if len(agreeing) == 1:
-            ja = agreeing.pop()
-            return LinkDecision(
-                place_id, "linked", ja, "name_part+address", "MEDIUM",
-                "name part matches and address agrees", parts,
-            )  # fmt: skip
+    # 3. name parts + address
+    parts = lookup(index.by_core, variants[1:], "name_part")
+    agreeing = {c.ja_kodas for c in parts if c.address_agrees}
+    if len(agreeing) == 1:
+        return LinkDecision(
+            place_id, "linked", agreeing.pop(), "name_part+address", "MEDIUM",
+            "name part matches and address agrees", parts,
+        )  # fmt: skip
 
-    # 3. address only
+    # 4. address only
+    addr_cands: list[Candidate] = []
     if address_key:
         at_address = sorted(index.by_address.get(address_key, ()))
         addr_cands = [
@@ -210,7 +256,7 @@ def decide(
                 place_id, "linked", c.ja_kodas, "address_only", "MEDIUM",
                 "only category-consistent entity registered at this address", parts + addr_cands,
             )  # fmt: skip
-        if parts or addr_cands:
+        if consistent:
             why = (
                 "multi-tenant address"
                 if hotspot
@@ -223,25 +269,24 @@ def decide(
             place_id, "ambiguous", reason="name part without address", candidates=parts
         )
     reason = "no distinctive name" if not variants else "no candidate entity"
-    return LinkDecision(place_id, "unmatched", reason=reason)
+    return LinkDecision(place_id, "unmatched", reason=reason, candidates=addr_cands)
 
 
 def run_primary_linking(con: duckdb.DuckDBPyConnection, run_month: str) -> dict[str, int]:
     index = EntityIndex(con)
     places = con.execute(
-        """
-        SELECT place_id, name, category, street, street_number,
-               count(*) OVER (PARTITION BY lower(street), lower(street_number)) AS places_at_address
-        FROM core.place_snapshot WHERE run_month = ? AND in_scope
-        """,
+        "SELECT place_id, name, category, street, street_number "
+        "FROM core.place_snapshot WHERE run_month = ? AND in_scope",
         [run_month],
     ).fetchall()
-    decisions = [decide(index, *row) for row in places]
+    keys = [(a.key if (a := parse_street(st, no)) else None) for *_, st, no in places]
+    per_address = Counter(k for k in keys if k)
+    decisions = [
+        decide(index, *row, per_address[k] if k else 0) for row, k in zip(places, keys, strict=True)
+    ]
     write_decisions(con, run_month, decisions, stage="primary")
-    stats: dict[str, int] = defaultdict(int)
-    for d in decisions:
-        stats[f"{d.status}:{d.method or d.reason}"] += 1
-    log.info("linking.primary", places=len(decisions), **{k: v for k, v in sorted(stats.items())})
+    stats: Counter[str] = Counter(f"{d.status}:{d.method or d.reason}" for d in decisions)
+    log.info("linking.primary", places=len(decisions), **dict(sorted(stats.items())))
     return dict(stats)
 
 

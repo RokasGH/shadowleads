@@ -237,3 +237,59 @@ def fetch_vmi_register(
         """
     )
     log.info("vmi_register.loaded", rows=rows)
+
+
+RC_PL_MODEL = "rc/jar/pelno_ataskaitos/PelnoAtaskaita"
+RC_PL_FIELDS = [
+    "_id", "juridinis_asmuo.ja_kodas", "reiksme", "laikotarpis_nuo", "laikotarpis_iki",
+    "reg_date", "template_id",
+]  # fmt: skip
+
+
+def fetch_revenue(
+    con: duckdb.DuckDBPyConnection,
+    client: PoliteClient,
+    raw_dir: Path,
+    run_month: str,
+    since_fy: int,
+) -> None:
+    """Sales revenue ("PARDAVIMO PAJAMOS") from filed profit & loss statements, FY >= since_fy.
+
+    The open export lags (in 2026-09 it held FY2024 for ~230k companies but FY2025 for only ~7k),
+    so every row keeps its fiscal year and the latest available year is used and labelled.
+    Rows come in exact duplicate pairs in the source; they are de-duplicated here.
+    """
+    dest = _raw_path(raw_dir, "rc_revenue", f"pardavimo_pajamos_fy{since_fy}plus.jsonl.gz")
+    filters = f'line_name="PARDAVIMO PAJAMOS"&laikotarpis_iki>="{since_fy}-01-01"'
+    rows = (
+        _count_lines(dest)
+        if dest.exists()
+        else export_model(client, RC_PL_MODEL, RC_PL_FIELDS, dest, filters=filters)
+    )
+    fid = record_fetch(
+        con,
+        source="rc_revenue",
+        url=f"get.data.gov.lt/{RC_PL_MODEL}?{filters}",
+        path=dest,
+        run_month=run_month,
+        row_count=rows,
+    )
+    con.execute(
+        f"""
+        CREATE OR REPLACE TABLE stg.rc_revenue AS
+        SELECT DISTINCT
+            CAST(juridinis_asmuo__ja_kodas AS BIGINT) AS ja_kodas,
+            TRY_CAST(laikotarpis_nuo AS DATE) AS period_from,
+            TRY_CAST(laikotarpis_iki AS DATE) AS period_to,
+            year(TRY_CAST(laikotarpis_iki AS DATE)) AS fiscal_year,
+            TRY_CAST(reiksme AS DOUBLE) AS revenue,
+            TRY_CAST(reg_date AS DATE) AS filed_on,
+            '{fid}' AS fetch_id
+        FROM read_json('{dest}', format='newline_delimited', columns={{
+            '_id':'VARCHAR','juridinis_asmuo__ja_kodas':'VARCHAR','reiksme':'VARCHAR',
+            'laikotarpis_nuo':'VARCHAR','laikotarpis_iki':'VARCHAR','reg_date':'VARCHAR',
+            'template_id':'VARCHAR'}})
+        WHERE juridinis_asmuo__ja_kodas IS NOT NULL
+        """
+    )
+    log.info("rc_revenue.loaded", rows=rows)

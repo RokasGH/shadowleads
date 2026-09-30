@@ -15,6 +15,7 @@ kept under `data/raw/google/<month>/` for the monthly run and are meant to be pu
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import math
 from dataclasses import dataclass
@@ -50,6 +51,10 @@ M_PER_DEG_LAT = 111_320.0
 
 class BudgetExhaustedError(RuntimeError):
     pass
+
+
+class QuotaExhaustedError(RuntimeError):
+    """Google project quota (e.g. requests per day) hit - retrying will not help."""
 
 
 class _Retryable(Exception):
@@ -155,6 +160,8 @@ class PlacesCollector:
             json=body,
             headers={"X-Goog-Api-Key": self.api_key, "X-Goog-FieldMask": FIELD_MASK},
         )
+        if resp.status_code == 429 and "RESOURCE_EXHAUSTED" in resp.text and "per day" in resp.text:
+            raise QuotaExhaustedError(resp.json()["error"]["message"])
         if resp.status_code == 429 or resp.status_code >= 500:
             raise _Retryable(str(resp.status_code))
         return resp
@@ -184,16 +191,25 @@ class PlacesCollector:
     ) -> list[dict[str, Any]]:
         """Adaptive quadtree sweep. Returns the manifest: one row per queried cell."""
         manifest: list[dict[str, Any]] = []
-        stack = [root_cell(bbox)]
-        while stack:
-            cell = stack.pop()
+        root = root_cell(bbox)
+        # Centre-first: if the budget or a quota stops the sweep, what we have is a contiguous
+        # central area (reported by the DQ checks) rather than a random patchwork.
+        heap: list[tuple[float, int, Cell]] = [(0.0, 0, root)]
+        seq = 0
+        while heap:
+            _, _, cell = heapq.heappop(heap)
             body = request_body(cell, primary_types)
             try:
                 rh, payload = self.search(body)
-            except BudgetExhaustedError:
-                log.error("google.budget_exhausted", pending_cells=len(stack) + 1)
-                manifest.append(_manifest_row(cell, None, 0, status="budget_exhausted"))
-                manifest.extend(_manifest_row(c, None, 0, status="budget_exhausted") for c in stack)
+            except (BudgetExhaustedError, QuotaExhaustedError) as exc:
+                log.error("google.sweep_stopped", reason=str(exc), pending_cells=len(heap) + 1)
+                status = (
+                    "budget_exhausted"
+                    if isinstance(exc, BudgetExhaustedError)
+                    else "quota_exhausted"
+                )
+                manifest.append(_manifest_row(cell, None, 0, status=status))
+                manifest.extend(_manifest_row(c, None, 0, status=status) for _, _, c in heap)
                 break
             n = len(payload.get("places", []))
             saturated = n >= MAX_RESULTS
@@ -209,7 +225,9 @@ class PlacesCollector:
                     if inside:  # every place in this child square was already returned
                         manifest.append(_manifest_row(child, None, 0, status="covered_by_parent"))
                     else:
-                        stack.append(child)
+                        seq += 1
+                        dist = haversine_m(root.lat, root.lng, child.lat, child.lng)
+                        heapq.heappush(heap, (dist, seq, child))
             else:
                 status = "truncated" if saturated else "complete"
             manifest.append(_manifest_row(cell, rh, n, status=status))

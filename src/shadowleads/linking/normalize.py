@@ -60,6 +60,20 @@ def name_key(name: str | None) -> str:
     return key if len(key.replace(" ", "")) >= 3 else ""
 
 
+_CITY_WORDS = frozenset({"vilnius", "vilniuje", "vilniaus", "lt", "lietuva"})
+
+
+def exact_key(name: str | None) -> str:
+    """Full name with only the legal form, punctuation and city words removed.
+
+    'Latransa autoservisas, UAB' == 'UAB Latransa autoservisas' -> 'latransa autoservisas'.
+    Generic words are kept: this is the strict "full name" comparison.
+    """
+    tokens = [t for t in strip_legal_form(fold(name)).split() if t not in _CITY_WORDS]
+    key = " ".join(tokens)
+    return key if len(key.replace(" ", "")) >= 3 else ""
+
+
 def name_variants(name: str | None) -> list[str]:
     """Keys for a Google display name and its separator-delimited parts.
 

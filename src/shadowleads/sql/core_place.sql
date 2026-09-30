@@ -7,7 +7,7 @@ DELETE FROM core.place_snapshot WHERE run_month = '{run_month}';
 
 INSERT INTO core.place_snapshot
 SELECT
-    g.*,
+    g.* EXCLUDE (reason, self_service),
     reason IS NULL AS in_scope,
     coalesce(reason, '') AS out_of_scope_reason,
     self_service

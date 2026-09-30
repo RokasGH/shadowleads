@@ -36,9 +36,7 @@ class Settings(BaseSettings):
     oxylabs_api_url: str = Field(
         "https://realtime.oxylabs.io/v1/queries", validation_alias=_alias("OXYLABS_API_URL")
     )
-    oxylabs_geo_location: str = Field(
-        "Vilnius,Lithuania", validation_alias=_alias("OXYLABS_GEO_LOCATION")
-    )
+    oxylabs_geo_location: str = Field("Lithuania", validation_alias=_alias("OXYLABS_GEO_LOCATION"))
     oxylabs_budget: int = Field(300, validation_alias=_alias("SHADOWLEADS_OXYLABS_BUDGET"))
 
     pseudonym_key: SecretStr = Field(
