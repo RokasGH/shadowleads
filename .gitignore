@@ -1,0 +1,21 @@
+# secrets
+.env
+
+# data (raw landing zone, caches, warehouse) - never committed
+data/
+output/*/raw/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+*.egg-info/
+dist/
+
+# os / editors
+.DS_Store
+.idea/
+.vscode/
