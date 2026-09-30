@@ -182,16 +182,14 @@ def fetch_serp(
         con.execute(
             """CREATE TABLE IF NOT EXISTS stg.serp_code (
                 run_month VARCHAR, place_id VARCHAR, purpose VARCHAR, query VARCHAR,
-                code VARCHAR, hits INTEGER)"""
+                code VARCHAR, hits INTEGER, hits_named INTEGER)"""
         )
         con.execute("DELETE FROM stg.serp_code WHERE run_month = ?", [month])
+        cols = ["place_id", "purpose", "query", "code", "hits", "hits_named"]
         if rows:
             con.executemany(
-                "INSERT INTO stg.serp_code VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    [month, r["place_id"], r["purpose"], r["query"], r["code"], r["hits"]]
-                    for r in rows
-                ],
+                "INSERT INTO stg.serp_code VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [[month, *(r[c] for c in cols)] for r in rows],
             )
         log.info("serp.done", targets=len(targets), rows=len(rows), calls=client.calls_this_run())
 
@@ -218,13 +216,72 @@ def validate(run_month: RunMonth | None = None) -> None:
         if labels.exists():
             con.execute(
                 "CREATE OR REPLACE TABLE core.link_audit_label AS "
-                "SELECT * FROM read_csv(?, header=true, columns={'place_id':'VARCHAR',"
-                "'ja_kodas':'BIGINT','verdict':'VARCHAR','auditor':'VARCHAR',"
-                "'audited_on':'DATE','note':'VARCHAR'}) WHERE verdict IN ('correct', 'wrong')",
+                "SELECT place_id, CAST(ja_kodas AS BIGINT) AS ja_kodas, lower(trim(verdict)) AS verdict, "
+                "auditor, TRY_CAST(audited_on AS DATE) AS audited_on, note "
+                "FROM read_csv(?, header=true, all_varchar=true) "
+                "WHERE lower(trim(verdict)) IN ('correct', 'wrong')",
                 [str(labels)],
             )
         run_sql_file(con, "core_link_validation.sql", run_month=month)
         run_sql_file(con, "mart_entity_activity.sql", run_month=month)
+
+
+@app.command
+def audit_sample(run_month: RunMonth | None = None, *, per_stratum: int = 4) -> None:
+    """Write a stratified random sample of links (category x method family) to
+    labels/match_audit.csv for manual verification (V3). Fill `verdict` with correct|wrong."""
+    s = get_settings()
+    month = run_month or current_run_month()
+    out = Path("labels/match_audit.csv")
+    out.parent.mkdir(exist_ok=True)
+    with session(s.db_path, read_only=True) as con:
+        con.execute(
+            f"""
+            COPY (
+                WITH l AS (
+                    SELECT v.*, p.name AS place_name, p.formatted_address AS place_address,
+                           p.maps_uri, p.website, e.legal_name, e.registered_address,
+                           CASE WHEN v.method LIKE 'fallback%' THEN 'fallback'
+                                WHEN v.method LIKE 'exact%' THEN 'exact_name'
+                                WHEN v.method LIKE 'core%' OR v.method LIKE 'name_part%' THEN 'core_name'
+                                ELSE v.method END AS method_family
+                    FROM core.link_validation v
+                    JOIN core.place_snapshot p USING (run_month, place_id)
+                    JOIN core.entity e USING (ja_kodas)
+                    WHERE v.run_month = '{month}'
+                ),
+                ranked AS (
+                    SELECT *, row_number() OVER (
+                        PARTITION BY category, method_family ORDER BY hash(place_id || '{month}')) AS rn
+                    FROM l
+                )
+                SELECT place_id, ja_kodas, '' AS verdict, '' AS auditor, '' AS audited_on, '' AS note,
+                       category, method_family, method, validation_status, place_name, place_address,
+                       maps_uri, website, legal_name, registered_address,
+                       'https://rekvizitai.vz.lt/paieska/?name=' || ja_kodas AS lookup_hint
+                FROM ranked WHERE rn <= {per_stratum}
+                ORDER BY category, method_family
+            ) TO '{out}' (HEADER, DELIMITER ',')
+            """
+        )
+    log.info("audit_sample.written", path=str(out))
+
+
+@app.command
+def score(run_month: RunMonth | None = None) -> None:
+    """Score entities against peers and assign lead tiers (mart.lead + analyst views)."""
+    from shadowleads.db import run_sql_file
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path) as con:
+        run_sql_file(con, "mart_lead.sql", run_month=month)
+        run_sql_file(con, "mart_views.sql")
+        rows = con.execute(
+            "SELECT tier, count(*) FROM mart.lead WHERE run_month = ? GROUP BY 1 ORDER BY 1",
+            [month],
+        ).fetchall()
+    log.info("score.done", **{t: n for t, n in rows})
 
 
 @app.command

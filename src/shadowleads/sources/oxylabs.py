@@ -23,6 +23,7 @@ import duckdb
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
+from shadowleads.linking.normalize import fold, name_key
 from shadowleads.log import get_logger
 from shadowleads.sources.websites import extract_codes
 
@@ -40,14 +41,22 @@ def build_query(name: str, street: str | None, number: str | None) -> str:
     return " ".join(p for p in (name, address, "Vilnius įmonės kodas") if p)
 
 
-def codes_from_serp(payload: dict[str, Any]) -> Counter[str]:
-    """Company codes quoted in organic result titles/snippets, counted across results."""
+def codes_from_serp(payload: dict[str, Any], name_hint: str | None = None) -> Counter[str]:
+    """Company codes quoted in organic result titles/snippets, counted across results.
+
+    With `name_hint`, only results whose text also mentions every token of the business's
+    distinctive name count - snippets routinely quote codes of landlords, neighbours or
+    similarly named companies.
+    """
+    tokens = name_key(name_hint).split() if name_hint else []
     counts: Counter[str] = Counter()
     for result in payload.get("results", []):
         content = result.get("content") or {}
         organic = content.get("results", {}).get("organic", []) if isinstance(content, dict) else []
         for item in organic:
             text = f"{item.get('title', '')} . {item.get('desc', '')}"
+            if tokens and not all(t in fold(text).split() for t in tokens):
+                continue
             found = {code for kind, code, _ in extract_codes(text) if kind == "company"}
             counts.update(found)
     return counts
@@ -161,15 +170,15 @@ def run_serp_lookups(
                 log.info("oxylabs.progress", done=i, total=len(to_fetch))
 
     rows: list[dict[str, Any]] = []
-    for place_id, purpose, *_ in targets:
+    for place_id, purpose, name, *_ in targets:
         if place_id not in results:
             continue
         query = queries[place_id]
-        rows.append(
-            {"place_id": place_id, "purpose": purpose, "query": query, "code": None, "hits": 0}
-        )
+        named = codes_from_serp(results[place_id], name)
+        base = {"place_id": place_id, "purpose": purpose, "query": query}
+        rows.append({**base, "code": None, "hits": 0, "hits_named": 0})
         rows += [
-            {"place_id": place_id, "purpose": purpose, "query": query, "code": c, "hits": n}
+            {**base, "code": c, "hits": n, "hits_named": named.get(c, 0)}
             for c, n in codes_from_serp(results[place_id]).items()
         ]
     return rows

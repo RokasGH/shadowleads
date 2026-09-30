@@ -72,6 +72,11 @@ SELECT
         WHEN a.audit_verdict = 'correct' THEN 'confirmed_by_audit'
         WHEN coalesce(v2.sources_conflicting, 0) > 0 AND coalesce(v2.sources_confirming, 0) = 0 THEN 'conflict'
         WHEN coalesce(v2.sources_confirming, 0) > 0 THEN 'confirmed'
+        -- fallback links ARE independent evidence: 2+ distinct sources confirm each other
+        WHEN l.stage = 'fallback' AND len(list_filter(
+                string_split(replace(l.method, 'fallback:', ''), '+'),
+                x -> x <> 'primary_candidate')) >= 2 THEN 'confirmed'
+        WHEN l.stage = 'fallback' THEN 'single_source'
         ELSE 'unverified'
     END                                                      AS validation_status
 FROM link l
@@ -89,5 +94,10 @@ UPDATE core.link_validation SET usable =
     AND NOT implausible_spread
     AND (
         validation_status IN ('confirmed', 'confirmed_by_audit')
+        -- strong primary rule + plausibility
         OR (confidence = 'HIGH' AND (activity_fits OR address_agrees))
+        -- a company code the business publishes itself, or its food-premises registration,
+        -- plus an activity code that fits the category
+        OR (validation_status = 'single_source' AND activity_fits
+            AND (method LIKE '%website%' OR method LIKE '%vmvt%'))
     );

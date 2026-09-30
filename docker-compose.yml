@@ -1,0 +1,37 @@
+# `docker compose up` - one command on a clean machine.
+#   * with GOOGLE_MAPS_API_KEY (and optionally OXYLABS_*) in .env: full live monthly run
+#   * without keys: offline demo built from the committed, pseudonymised example
+# then the analyst app is served on http://localhost:8501
+services:
+  pipeline:
+    build: .
+    image: shadowleads:latest
+    command: ["auto"]
+    environment:
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      OXYLABS_USERNAME: ${OXYLABS_USERNAME:-}
+      OXYLABS_PASSWORD: ${OXYLABS_PASSWORD:-}
+      OXYLABS_GEO_LOCATION: ${OXYLABS_GEO_LOCATION:-Lithuania}
+      SHADOWLEADS_RUN_MONTH: ${SHADOWLEADS_RUN_MONTH:-}
+      SHADOWLEADS_PSEUDONYM_KEY: ${SHADOWLEADS_PSEUDONYM_KEY:-}
+    volumes:
+      - warehouse:/app/data
+      - ./output:/app/output
+
+  app:
+    image: shadowleads:latest
+    depends_on:
+      pipeline:
+        condition: service_completed_successfully
+    entrypoint: ["streamlit", "run", "app/streamlit_app.py",
+                 "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true",
+                 "--browser.gatherUsageStats=false"]
+    environment:
+      SHADOWLEADS_DATA_DIR: /app/data
+    ports:
+      - "8501:8501"
+    volumes:
+      - warehouse:/app/data:ro
+
+volumes:
+  warehouse:

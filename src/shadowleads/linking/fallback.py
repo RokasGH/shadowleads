@@ -54,6 +54,12 @@ def listing_slug_name(url: str | None) -> str | None:
     return m.group(1).replace("_", " ").replace("-", " ") if m else None
 
 
+def _near(a: str, b: str, tolerance: int = 4) -> bool:
+    """House numbers '29' and '31a' are within `tolerance` of each other."""
+    na, nb = re.match(r"\d+", a), re.match(r"\d+", b)
+    return bool(na and nb) and abs(int(na.group()) - int(nb.group())) <= tolerance  # type: ignore[union-attr]
+
+
 def _load_evidence(
     con: duckdb.DuckDBPyConnection, run_month: str
 ) -> dict[str, dict[str, set[str]]]:
@@ -73,7 +79,8 @@ def _load_evidence(
             ev[pid]["website"].add(("c:" if kind == "company" else "v:") + code)
     if "serp_code" in tables:
         for pid, code in con.execute(
-            "SELECT place_id, code FROM stg.serp_code WHERE run_month = ? AND code IS NOT NULL",
+            "SELECT place_id, code FROM stg.serp_code "
+            "WHERE run_month = ? AND code IS NOT NULL AND hits_named > 0",
             [run_month],
         ).fetchall():
             ev[pid]["serp"].add("c:" + code)
@@ -88,6 +95,7 @@ def run_fallback(con: duckdb.DuckDBPyConnection, run_month: str) -> dict[str, in
         ).fetchall()
     )
     vmvt_by_addr: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    vmvt_by_street: dict[str, dict[tuple[str, str], list[tuple[int, str]]]] = defaultdict(dict)
     has_vmvt = con.execute(
         "SELECT count(*) FROM information_schema.tables WHERE table_schema='stg' AND table_name='vmvt_premises'"
     ).fetchone()
@@ -96,8 +104,11 @@ def run_fallback(con: duckdb.DuckDBPyConnection, run_month: str) -> dict[str, in
             "SELECT ja_kodas, trade_name, address FROM stg.vmvt_premises WHERE ja_kodas IS NOT NULL"
         ).fetchall():
             a = parse_lt_address(address)
-            if a and a.key:
+            if a and a.key and a.number:
                 vmvt_by_addr[a.key].append((ja, trade or ""))
+                vmvt_by_street[a.street].setdefault((a.street, a.number), []).append(
+                    (ja, trade or "")
+                )
 
     evidence = _load_evidence(con, run_month)
     primary_cands: dict[str, set[int]] = defaultdict(set)
@@ -112,10 +123,12 @@ def run_fallback(con: duckdb.DuckDBPyConnection, run_month: str) -> dict[str, in
         for r in con.execute(
             """
             SELECT p.place_id, p.name, p.category, p.street, p.street_number, p.website,
-                   l.status, l.ja_kodas
+                   -- re-runnable: a previous fallback link counts as unresolved by the primary rules
+                   CASE WHEN l.stage = 'fallback' THEN 'ambiguous' ELSE l.status END,
+                   CASE WHEN l.stage = 'fallback' THEN NULL ELSE l.ja_kodas END
             FROM core.place_snapshot p
             JOIN core.place_entity_link l USING (run_month, place_id)
-            WHERE p.run_month = ? AND p.in_scope AND l.stage = 'primary'
+            WHERE p.run_month = ? AND p.in_scope
             """,
             [run_month],
         ).fetchall()
@@ -142,18 +155,35 @@ def run_fallback(con: duckdb.DuckDBPyConnection, run_month: str) -> dict[str, in
             seen_codes["listing_url"].add(slug)
             for ja, _ in index.by_exact.get(exact_key(slug), ()):
                 support[ja].add("listing_url")
-        if p.category == "nightlife" and address_key:
-            for ja, trade in vmvt_by_addr.get(address_key, []):
-                seen_codes["vmvt"].add(f"c:{ja}")
-                if ja in index.entities:
-                    same_name = fuzz.token_set_ratio(name_key(p.name), name_key(trade)) >= 80
-                    if same_name or len(vmvt_by_addr[address_key]) == 1:
+        if p.category == "nightlife" and addr is not None and addr.number:
+            premises = vmvt_by_addr.get(address_key or "", [])
+            for ja, trade in premises:
+                # only premises that are plausibly this business: same trade name, or the only
+                # food business at the address (co-tenants are not evidence either way)
+                same_name = fuzz.token_set_ratio(name_key(p.name), name_key(trade)) >= 80
+                if (same_name or len(premises) == 1) and ja in index.entities:
+                    seen_codes["vmvt"].add(f"c:{ja}")
+                    support[ja].add("vmvt")
+            # registry and Google disagree on house numbers of malls / corner buildings
+            # ("Verkių g. 31" vs "Verkių g. 29"): same street, number within +-4, same trade name
+            for (_street, number), plist in vmvt_by_street.get(addr.street, {}).items():
+                if number == addr.number or not _near(number, addr.number):
+                    continue
+                for ja, trade in plist:
+                    same_name = fuzz.token_set_ratio(name_key(p.name), name_key(trade)) >= 90
+                    if same_name and name_key(p.name) and ja in index.entities:
+                        seen_codes["vmvt"].add(f"c:{ja}")
                         support[ja].add("vmvt")
 
         # V2: does the independent evidence agree with the primary link?
         if p.status == "linked" and p.ja_kodas is not None:
             for source in sorted(seen_codes):
                 agrees = source in support.get(p.ja_kodas, set())
+                names_other = any(
+                    source in srcs for ja, srcs in support.items() if ja != p.ja_kodas
+                )
+                if not agrees and not names_other:
+                    continue  # codes resolving to no active entity are not evidence either way
                 verdict = "confirms" if agrees else "conflicts"
                 agreement.append(
                     (p.place_id, source, verdict, ",".join(sorted(seen_codes[source])))
@@ -227,7 +257,7 @@ def serp_targets(
         """
         SELECT p.place_id, 'fallback', p.name, p.street, p.street_number
         FROM core.place_snapshot p JOIN core.place_entity_link l USING (run_month, place_id)
-        WHERE p.run_month = ? AND p.in_scope AND l.status <> 'linked'
+        WHERE p.run_month = ? AND p.in_scope AND (l.status <> 'linked' OR l.stage = 'fallback')
           AND coalesce(p.user_rating_count, 0) >= ? AND NOT p.self_service
         ORDER BY p.user_rating_count DESC LIMIT ?
         """,

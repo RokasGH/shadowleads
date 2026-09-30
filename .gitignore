@@ -19,3 +19,9 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# manual audit labels contain real business names; commit only after review
+labels/*.csv
+
+# local run outputs contain real names; the public example lives in examples/ (pseudonymised)
+output/

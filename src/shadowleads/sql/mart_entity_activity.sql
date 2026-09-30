@@ -15,7 +15,7 @@ WITH params AS (
         (SELECT max(year) FROM stg.vmi_taxes)                            AS vmi_current_year
 ),
 lp AS (  -- linked places with their validation
-    SELECT p.*, v.ja_kodas, v.method, v.confidence, v.validation_status, v.usable
+    SELECT p.*, v.ja_kodas, v.method, v.confidence, v.validation_status, v.usable, v.activity_fits
     FROM core.link_validation v
     JOIN core.place_snapshot p USING (run_month, place_id)
     WHERE v.run_month = '{run_month}'
@@ -36,6 +36,7 @@ visible AS (
         list(place_id ORDER BY user_rating_count DESC)      AS place_ids,
         list(name ORDER BY user_rating_count DESC)          AS place_names,
         bool_and(usable)                                    AS all_links_usable,
+        bool_or(activity_fits)                              AS activity_fits,
         max(confidence)                                     AS weakest_confidence,  -- 'MEDIUM' > 'HIGH'
         list(DISTINCT method)                               AS link_methods,
         list(DISTINCT validation_status)                    AS validation_statuses
