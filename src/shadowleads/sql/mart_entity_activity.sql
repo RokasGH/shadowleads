@@ -42,17 +42,6 @@ visible AS (
         list(DISTINCT validation_status)                    AS validation_statuses
     FROM lp GROUP BY ja_kodas
 ),
-shared AS (
-    -- the SAME venue linked to another company too (declared figures may be split between them):
-    -- same building AND the same / near-identical business name. Different businesses in a
-    -- multi-tenant building (salons in a beauty centre) are not shared premises.
-    SELECT DISTINCT a.ja_kodas
-    FROM lp a JOIN lp b
-      ON lower(a.street) = lower(b.street) AND a.street_number = b.street_number
-     AND a.ja_kodas <> b.ja_kodas
-     AND (jaro_winkler_similarity(lower(a.name), lower(b.name)) >= 0.9
-          OR contains(lower(a.name), lower(b.name)) OR contains(lower(b.name), lower(a.name)))
-),
 vmi AS (
     SELECT
         ja_kodas,
@@ -119,7 +108,6 @@ SELECT
     -- flags that change how far a lead can be trusted
     e.other_municipality_branches > 0      AS multi_site,
     v.n_places > 1                         AS chain,
-    sh.ja_kodas IS NOT NULL                AS shared_premises,
     e.registered_on > CAST('{run_month}-01' AS DATE) - INTERVAL 12 MONTH AS new_entity,
     date_diff('month', e.registered_on, CAST('{run_month}-01' AS DATE)) AS entity_age_months,
     e.jar_fetch_id, vm.vmi_fetch_id, so.sodra_fetch_id, r.revenue_fetch_id,
@@ -130,7 +118,7 @@ JOIN core.entity e USING (ja_kodas)
 LEFT JOIN vmi vm USING (ja_kodas)
 LEFT JOIN sodra so USING (ja_kodas)
 LEFT JOIN revenue r USING (ja_kodas)
-LEFT JOIN shared sh USING (ja_kodas);
+;
 
 CREATE OR REPLACE TABLE mart.entity_activity AS
 SELECT * FROM _ea

@@ -11,7 +11,7 @@
 -- SECONDARY - ratios (reviews per EUR 1k taxes / revenue, insured per 100 reviews); near-zero
 --   declared values are clamped to a floor so ratios cannot explode.
 -- CORROBORATION - staffing floor (opening hours vs insured), VAT gap, near-zero declared.
--- TIERS - A needs: usable link, visibly busy, clear tax gap, no risky flag, >= 1 corroborating
+-- TIERS - A needs: usable link, visibly busy, clear tax gap, >= 1 corroborating
 --   signal (>= 2 when the rating is extreme: very low/high ratings need more evidence).
 
 CREATE TABLE IF NOT EXISTS mart.lead AS SELECT NULL::VARCHAR AS run_month WHERE false;
@@ -55,7 +55,12 @@ SELECT
          THEN bz.busy_floor_extreme ELSE bz.busy_floor END                      AS visibly_busy,
     CASE WHEN ea.owner_operated THEN 'owner_operated' ELSE 'company' END        AS form_class,
     -- declared dimensions (NULL = unknown, never silently 0)
-    CASE WHEN ea.has_vmi_record THEN coalesce(ea.taxes_prev_year, 0) END        AS d_taxes,
+    -- VMI taxes of the last complete year; companies whose 2025 row is not yet published are
+    -- scored on their latest published year (2024), labelled in taxes_year / taxes_from_earlier_year
+    CASE WHEN ea.has_vmi_record
+         THEN coalesce(ea.taxes_prev_year, ea.taxes_last_reported) END        AS d_taxes,
+    CASE WHEN ea.taxes_has_tax_year_row THEN ea.tax_year
+         ELSE ea.taxes_last_reported_year END                                    AS taxes_year,
     CASE WHEN ea.has_sodra_record AND ea.contribution_months_suppressed = 0
               THEN coalesce(ea.contributions_prev_year, 0)
          WHEN NOT ea.has_sodra_record AND ea.has_vmi_record THEN 0 END          AS d_contributions,
@@ -139,9 +144,7 @@ SELECT
     s.activity_quintile,
     -- declared
     s.tax_year, s.d_taxes AS taxes_paid, s.taxes_ytd, s.taxes_ytd_through_month,
-    -- no VMI row for the tax year while earlier years exist: the score assumes EUR 0 (shown to analyst)
-    NOT s.taxes_has_tax_year_row AS taxes_assumed_zero,
-    s.taxes_last_reported_year, s.taxes_last_reported,
+    s.taxes_year, s.taxes_year < s.tax_year AS taxes_from_earlier_year,
     s.d_contributions AS contributions, s.contribution_months_suppressed,
     round(s.d_headcount, 2) AS insured_avg, round(s.insured_avg_t12m, 2) AS insured_avg_t12m,
     s.d_revenue AS revenue, s.revenue_fy, s.revenue_is_stale, s.vat_registered,
@@ -160,9 +163,8 @@ SELECT
     (s.sig_near_zero_declared::INT + s.sig_staffing_floor::INT + s.sig_vat_gap::INT) AS n_signals,
     -- trust
     s.enough_reviews, s.visibly_busy, round(s.busy_floor) AS busy_floor, s.rating_extreme, s.all_links_usable, s.weakest_confidence,
-    s.link_methods, s.validation_statuses, s.owner_operated, s.multi_site, s.shared_premises,
+    s.link_methods, s.validation_statuses, s.owner_operated, s.multi_site,
     s.new_entity, s.entity_age_months, s.has_vmi_record, s.has_sodra_record, s.activity_fits,
-    (s.entity_age_months < 36 AND s.reviews_total > 500) AS young_entity_many_reviews,
     -- lineage
     s.sodra_as_of, s.taxes_updated_on, s.jar_fetch_id, s.vmi_fetch_id, s.sodra_fetch_id,
     s.revenue_fetch_id,
@@ -174,10 +176,6 @@ SELECT
         WHEN NOT s.visibly_busy THEN 'not visibly busy vs category (' || round(s.busy_floor)::INT || '+ reviews needed)'
         WHEN s.gap_taxes < ln(s.min_gap_ratio) THEN 'taxes in line with peers'
         WHEN NOT s.all_links_usable THEN 'link to legal entity not verified enough'
-        WHEN s.shared_premises THEN 'premises shared with another linked entity'
-        WHEN NOT s.taxes_has_tax_year_row
-             THEN 'no VMI tax row for ' || s.tax_year || ' (score assumes EUR 0) - verify before inspecting'
-        WHEN s.entity_age_months < 36 AND s.reviews_total > 500 THEN 'reviews may predate this operator'
         WHEN (s.sig_near_zero_declared::INT + s.sig_staffing_floor::INT + s.sig_vat_gap::INT)
              < CASE WHEN s.rating_extreme THEN 2 ELSE 1 END
              THEN 'no corroborating signal'
@@ -186,8 +184,7 @@ SELECT
         WHEN s.new_entity OR NOT s.has_vmi_record OR s.score IS NULL THEN 'D_insufficient_evidence'
         WHEN NOT s.enough_reviews OR NOT s.visibly_busy
              OR s.gap_taxes < ln(s.min_gap_ratio) THEN 'C_not_flagged'
-        WHEN s.all_links_usable AND NOT s.shared_premises AND s.taxes_has_tax_year_row
-             AND NOT (s.entity_age_months < 36 AND s.reviews_total > 500)
+        WHEN s.all_links_usable
              AND (s.sig_near_zero_declared::INT + s.sig_staffing_floor::INT + s.sig_vat_gap::INT)
                  >= CASE WHEN s.rating_extreme THEN 2 ELSE 1 END
         THEN 'A_candidate'

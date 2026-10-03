@@ -81,7 +81,16 @@ def styled(df: pd.DataFrame) -> Any:
 
 
 def show(df: pd.DataFrame, **kwargs: Any) -> None:
-    st.dataframe(styled(df), hide_index=True, width="stretch", **kwargs)
+    """Render a table; columns holding web addresses become clickable links."""
+    config = dict(kwargs.pop("column_config", None) or {})
+    for col in df.columns:
+        if col in config or df[col].dtype != object:
+            continue
+        sample = df[col].dropna()
+        if not sample.empty and str(sample.iloc[0]).startswith(("http://", "https://")):
+            label = "open map" if "map" in str(col).lower() else None
+            config[col] = st.column_config.LinkColumn(str(col), display_text=label)
+    st.dataframe(styled(df), hide_index=True, width="stretch", column_config=config, **kwargs)
 
 
 def eur(v: Any) -> str:
@@ -178,16 +187,11 @@ def reasons(r: pd.Series) -> list[str]:
             f"reviews/yr) paid a median **{eur(r.peer_median_taxes)}** in VMI taxes in "
             f"{int(r.tax_year)}; this company paid **{eur(r.taxes_paid)}** ({share} of peers)."
         )
-    if r.get("taxes_assumed_zero") is True:
-        last = (
-            f"last published: {int(r.taxes_last_reported_year)} {eur(r.taxes_last_reported)}"
-            if pd.notna(r.taxes_last_reported_year)
-            else "no earlier year either"
-        )
-        out.append(
-            f"**Tax data gap:** VMI publishes no {int(r.tax_year)} row for this company ({last}); "
-            "the score assumes €0 for that year - check before inspecting."
-        )
+        if r.get("taxes_from_earlier_year") is True:
+            out.append(
+                f"**Tax year used:** VMI has not published a {int(r.tax_year)} row for this "
+                f"company yet, so its **{int(r.taxes_year)}** taxes are used."
+            )
     if pd.notna(r.insured_avg):
         contrib = (
             eur(r.contributions) if pd.notna(r.contributions) else "hidden by Sodra (≤3 insured)"
@@ -270,7 +274,7 @@ def page_leads() -> None:
     df = q(
         """SELECT l.priority_rank AS "#", l.tier, l.legal_name, l.ja_kodas, l.main_category,
                   p.formatted_address AS main_address, p.maps_uri AS google_maps, l.n_places,
-                  l.reviews_total, l.rating_weighted, l.taxes_paid, l.peer_median_taxes,
+                  l.reviews_total, l.rating_weighted, l.taxes_paid, l.taxes_year, l.peer_median_taxes,
                   l.insured_avg, l.revenue, l.revenue_fy, l.score, l.n_signals,
                   coalesce(l.hold_reason, CASE WHEN l.tier = 'A_priority'
                            THEN 'meets all Priority A conditions' END) AS hold_reason
@@ -359,7 +363,15 @@ def lead_detail(month: str, ja: int) -> None:
             else "Insured persons (contributions hidden)"
         )
         rows = [
-            ("VMI taxes paid", r.taxes_paid, r.peer_median_taxes, r.gap_taxes, 0.5),
+            (
+                f"VMI taxes paid ({int(r.taxes_year)})"
+                if pd.notna(r.taxes_year)
+                else "VMI taxes paid",
+                r.taxes_paid,
+                r.peer_median_taxes,
+                r.gap_taxes,
+                0.5,
+            ),
             (
                 payroll_label,
                 r.contributions if pd.notna(r.contributions) else r.insured_avg,
@@ -649,6 +661,7 @@ def page_quality() -> None:
 # ----------------------------------------------------------------------------- SQL console
 TABLE_HELP = {
     "mart.lead": "One row per company: score, tier, hold reason, peer figures, signals. Start here.",
+    "mart.place": "One row per Google place: address, reviews, Google Maps link, linked company and tier.",
     "mart.entity_activity": "Per company: Google activity summed over its places, declared figures, flags.",
     "mart.category_summary": "Per category and snapshot: scored companies, flagged share, medians.",
     "mart.lead_history": "Per company and snapshot: tier and score vs the previous snapshot, and why it changed.",
@@ -668,6 +681,11 @@ TABLE_HELP = {
     "meta.source_fetch": "Every downloaded source file (URL, time, size, rows).",
 }
 SEED_QUERIES = {
+    "Find a place on Google Maps": """-- type part of the name; the google_maps column is a clickable link
+SELECT name, address, reviews, legal_name, tier, google_maps
+FROM mart.place
+WHERE name ILIKE '%grill london%'
+ORDER BY reviews DESC NULLS LAST""",
     "Share of flagged businesses per category": """SELECT main_category, count(*) AS scored,
        count(*) FILTER (WHERE tier IN ('A_priority','B_watchlist')) AS flagged,
        round(100.0 * flagged / scored, 1) AS pct_flagged
@@ -694,12 +712,16 @@ def state() -> sqlite3.Connection:
                name TEXT PRIMARY KEY, sql TEXT NOT NULL, description TEXT,
                created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""
     )
-    if not con.execute("SELECT count(*) FROM saved_query").fetchone()[0]:
+    con.execute("CREATE TABLE IF NOT EXISTS seeded (name TEXT PRIMARY KEY)")
+    seeded = {n for (n,) in con.execute("SELECT name FROM seeded")}
+    new = [(n, q_) for n, q_ in SEED_QUERIES.items() if n not in seeded]
+    if new:  # each built-in example is added once; if the analyst deletes it, it stays deleted
         now = datetime.now().isoformat(timespec="seconds")
         con.executemany(
-            "INSERT INTO saved_query VALUES (?, ?, 'built-in example', ?, ?)",
-            [(name, sql, now, now) for name, sql in SEED_QUERIES.items()],
+            "INSERT OR IGNORE INTO saved_query VALUES (?, ?, 'built-in example', ?, ?)",
+            [(n, q_, now, now) for n, q_ in new],
         )
+        con.executemany("INSERT INTO seeded VALUES (?)", [(n,) for n, _ in new])
         con.commit()
     return con
 
@@ -754,7 +776,11 @@ def page_sql() -> None:
             "it); **Load** or **Delete** saved ones. Saved queries are shared by everyone using "
             "this app instance.\n\n"
             "Tips: tables are `schema.table` (e.g. `mart.lead`); `ILIKE '%text%'` for "
-            "case-insensitive search; add `LIMIT 100` for quick looks; amounts are in EUR."
+            "case-insensitive search; add `LIMIT 100` for quick looks; amounts are in EUR.\n\n"
+            "**Google Maps:** `mart.place` has a clickable `google_maps` link for every place. "
+            "For any other table with a `place_id`, add `maps_url(place_id)` to the SELECT "
+            "(e.g. `SELECT place_id, maps_url(place_id) FROM core.link_validation`); any column "
+            "holding a web address is shown as a link."
         )
     saved = load_saved()
     if "sql_text" not in st.session_state:

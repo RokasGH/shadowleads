@@ -24,7 +24,7 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 | Google places in scope | 1,665 | 361 | 1,347 |
 | Linked to a legal entity | 17% | 49% | 42% |
 | ... share of all Google reviews covered | 41% | 68% | 68% |
-| Priority A / watchlist leads | 9 / 11 | 1 / 6 | 2 / 11 |
+| Priority A / watchlist leads | 11 / 8 | 1 / 6 | 2 / 10 |
 
 - 4,017 places swept, 1,031 linked, of which 803 links are trusted enough to feed Priority A.
 - Two manual audits of stratified links:
@@ -138,12 +138,9 @@ Priority A is capped at 20 per month (the analyst's capacity) and requires *all*
 - a usable link;
 - a visibly busy business;
 - peers paying at least 3× more tax;
-- an entity at least 12 months old, with a VMI record (missing data is never treated as zero);
-- a VMI tax row for the tax year itself: when only earlier years are published, the score assumes €0
-  and the lead stays on the watchlist until the analyst verifies it;
-- the venue is not linked to a second company (one venue run by two companies splits the declared
-  figures; different businesses in the same building do not count);
-- no sign that the reviews predate the operator;
+- an entity at least 12 months old, with a VMI record (missing data is never treated as zero;
+  companies whose 2025 tax row is not published yet are scored on their 2024 taxes, shown as
+  `taxes_year` and stated in the lead explanation);
 - at least one corroborating signal (two if the rating is extreme).
 
 Every other entity gets a tier and a stated `hold_reason`. Each lead also shows the legitimate

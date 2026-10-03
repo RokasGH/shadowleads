@@ -45,3 +45,21 @@ SELECT
     median(reviews_per_year)                                AS median_reviews_per_year
 FROM mart.lead
 GROUP BY ALL;
+
+-- Google Maps link for any place_id: SELECT maps_url(place_id) FROM ...
+-- documented URL format: https://developers.google.com/maps/documentation/urls/get-started
+CREATE OR REPLACE MACRO maps_url(pid) AS
+    'https://www.google.com/maps/search/?api=1&query=place&query_place_id=' || pid;
+
+-- One row per Google place with its link, company and lead tier - the easiest table to search.
+CREATE OR REPLACE VIEW mart.place AS
+SELECT
+    p.run_month, p.place_id, p.name, p.category, p.formatted_address AS address,
+    p.user_rating_count AS reviews, p.rating, p.phone, p.website,
+    coalesce(p.maps_uri, maps_url(p.place_id)) AS google_maps,
+    l.status AS link_status, l.method AS link_method, l.ja_kodas, e.legal_name,
+    ml.tier, ml.score, p.in_scope
+FROM core.place_snapshot p
+LEFT JOIN core.place_entity_link l USING (run_month, place_id)
+LEFT JOIN core.entity e ON e.ja_kodas = l.ja_kodas
+LEFT JOIN mart.lead ml ON ml.run_month = p.run_month AND ml.ja_kodas = l.ja_kodas;

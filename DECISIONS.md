@@ -7,9 +7,9 @@ Figures refer to the committed run (`examples/2026-09`).
 Declared activity (Sodra, VMI, financial statements) exists only per **company code**, so every
 Google place is linked to one entity and visible activity is summed over the entity's Vilnius places.
 *Rejected:* allocating entity-level taxes to places (no basis for the split). *Consequence:* entities
-operating outside Vilnius look better-declared than they are (safe direction, flagged `multi_site`);
-**several companies at one premises** look worse (unsafe direction, flagged `shared_premises` and
-kept out of Priority A).
+operating outside Vilnius look better-declared than they are (safe direction, flagged `multi_site`).
+A venue run by two companies at once would look worse; a rule for it was tried, but in the data
+it only caught different businesses in the same building, so it was dropped.
 
 ## 2. Linking: precision first, every candidate and piece of evidence stored
 1. **Exact full name**: JAR legal name or VMI *branch trade name* (e.g. Google "Bromas Baras" ->
@@ -96,10 +96,9 @@ scales linearly with reviews), and an ML model (no ground truth; not explainable
 
 ## 5. Cost of a false accusation is designed in
 Priority A (capped at 20/month, the analyst's capacity) requires all of: a usable link, a visibly
-busy entity, peers paying at least 3x more tax, no shared venue (the same venue linked to a second
-company, not just another business in the building), the entity at least 12 months old, a VMI
-record (missing ≠ zero) including a row for the tax year itself (a missing year is scored as €0 but
-held on the watchlist for verification), no sign that reviews predate the operator, and at least one
+busy entity, peers paying at least 3x more tax, the entity at least 12 months old, a VMI record
+(missing ≠ zero; a company whose 2025 row is not yet published is scored on its 2024 taxes, labelled
+`taxes_year`), and at least one
 corroborating signal (≥2 if the rating is extreme):
 - near-zero declared figures;
 - opening hours that need more staff than declared;

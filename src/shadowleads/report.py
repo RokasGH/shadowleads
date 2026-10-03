@@ -99,7 +99,6 @@ def coverage_report(con: duckdb.DuckDBPyConnection, run_month: str, out_dir: Pat
                       count(*) FILTER (WHERE revenue_fy >= tax_year) AS with_revenue_last_fy,
                       count(*) FILTER (WHERE owner_operated) AS owner_operated_mb_ii,
                       count(*) FILTER (WHERE vat_registered) AS vat_registered,
-                      count(*) FILTER (WHERE shared_premises) AS shared_premises,
                       count(*) FILTER (WHERE new_entity) AS new_entity
                FROM mart.entity_activity WHERE run_month = ? GROUP BY 1 ORDER BY 1""",
             m,
