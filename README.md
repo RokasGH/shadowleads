@@ -22,18 +22,19 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 | | Hair & beauty | Bars & clubs | Car wash & repair |
 |---|---|---|---|
 | Google places in scope | 1,668 | 361 | 1,348 |
-| Linked to a legal entity | 16% | 49% | 42% |
-| ... share of all Google reviews covered | 38% | 61% | 67% |
-| Priority A / watchlist leads | 7 / 8 | 0 / 5 | 2 / 12 |
+| Linked to a legal entity | 17% | 50% | 42% |
+| ... share of all Google reviews covered | 41% | 69% | 68% |
+| Priority A / watchlist leads | 8 / 13 | 0 / 7 | 2 / 12 |
 
-- 4,017 places swept, 1,005 linked, of which 775 links are trusted enough to feed Priority A.
+- 4,017 places swept, 1,033 linked, of which 776 links are trusted enough to feed Priority A.
 - Manual audit of 48 stratified links: 75% were correct before the audit-driven fixes. Of the 12 wrong
   links, 3 are no longer produced by the rules, 3 are corrected by analyst overrides, and 5 of the
   other 6 were already kept out of Priority A by the trust rules.
 - Independent evidence agrees with name-based links in 93% of the cases where both exist; for
   address-only links the figure is 64%, so those never feed Priority A unless confirmed.
-- External calls: 1,115 Google calls (within the free tier in each month), 450 Oxylabs results, and
-  about 900 polite requests to public registers.
+- External calls: 1,115 Google calls (within the free tier in each month), 749 Oxylabs results
+  (300 of them spent on the busiest still-unlinked places), and a few thousand rate-limited requests
+  to public registers and business websites.
 
 ## How it works
 
@@ -63,6 +64,7 @@ flowchart LR
   LV --> EA[mart.entity_activity]
   EA --> S2[mart.lead<br/>peer scoring + tiers]
   S2 --> APP[Streamlit app + SQL console]
+  S2 --> H[mart.lead_history]
 ```
 
 ### Data sources
@@ -148,7 +150,9 @@ assertions run on every run, and an `error` blocks the export.
   explanation, its Google listings, the official records (VMI per year, Sodra per month, revenue),
   the link evidence, the peer comparison, and deep links to the company's records at Registrų
   centras, VMI, Sodra and data.gov.lt.
-- **Coverage & map** (hover a place for its company and tier) and **Data quality**.
+- **Coverage & map** (filter by category, link status and tier; hover a place for its company),
+  **Month over month** and **Data quality**.
+- A **snapshot** selector in the sidebar switches every page between monthly runs.
 - **SQL console:** read-only SQL over the warehouse, with saved example questions:
   ```sql
   -- which categories have the highest share of flagged businesses?
@@ -169,12 +173,14 @@ assertions run on every run, and an `error` blocks the export.
   6. DQ checks
   7. export
 - Each stage is idempotent and can be run on its own (`shadowleads --help`).
-- The result is a **snapshot investigation**: all data available up to the run date, scored once.
-  The `run_month` key would allow keeping several snapshots side by side later.
+- Each run is stored as a monthly snapshot next to earlier ones. **Month over month** in the app
+  (and `mart.lead_history`) shows new, dropped and re-tiered leads and why they changed: re-linked,
+  declared figures changed, or Google activity changed.
 - Every Google and Oxylabs response is cached, and a call ledger enforces monthly budgets
   (`SHADOWLEADS_GOOGLE_BUDGET`, default 900).
-- **SQL console:** saved queries live in `queries/saved_queries.json`, mounted from the host in
-  Docker so they survive restarts.
+- **Saved SQL queries** are application state, kept in a small SQLite database
+  (`state/app_state.sqlite`, its own Docker volume), separate from the code and the read-only
+  warehouse.
 
 **Local development:**
 ```bash
@@ -197,7 +203,6 @@ src/shadowleads/
   cli.py     stages + `run` / `auto` / `demo`
 app/         Streamlit analyst app
 examples/    real run (Parquet tables for the offline demo + leads.csv)
-queries/     saved SQL console queries
 labels/      analyst audit labels and link overrides (inputs)
 tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 ```

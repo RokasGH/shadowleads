@@ -48,6 +48,15 @@ Times is relative to each venue's own peak and was dropped). *Busy* = at or abov
 75th percentile of **all** Google places in Vilnius (90th percentile when the rating is ≤3.5 or
 ≥4.8: extreme ratings attract disproportionate reviews, so they need more evidence instead of
 having their counts adjusted).
+**Limitation: reviews cannot be matched to the tax year.** Declared figures are per calendar or
+fiscal year (VMI 2025, revenue FY2024/25), but the Places API returns only the lifetime review count
+plus 5 "most relevant" reviews, with no per-period counts. Reviews per year is therefore a lifetime
+average: total reviews divided by years active, counted from the later of the company's
+registration and 2015 (when Google reviews took off), between 1 and 10 years. It understates recent growth and overstates a venue whose popularity has faded. Exact
+reviews per tax year would need review dates, which can only be scraped from the review list
+(SerpApi or Oxylabs, about 1 request per 10–20 reviews). That is affordable for the ~35 Priority A
+and watchlist companies but not for every place; monthly snapshots of the review count give exact
+per-month deltas from the second snapshot onwards.
 *Score* = weighted log-gap between the peer median and the declared figure: VMI taxes paid (main,
 0.5), Sodra contributions or headcount when Sodra suppresses contributions (≤3 insured) (0.3), and
 revenue from the latest filed financial statement (0.2, labelled with its fiscal year). Peers =
@@ -79,8 +88,13 @@ pytest/Hypothesis in CI.
   computed from, and the app links each company to its records at Registrų centras, VMI, Sodra
   and data.gov.lt. The fingerprint proves which exact version of a file a lead came from, because
   the official files are overwritten in place.
-- **Idempotent runs:** each stage is idempotent. The output is a snapshot investigation (all data up
-  to the run date); month-over-month change tracking was dropped by decision.
+- **Monthly snapshots:** each stage is idempotent per run month and every monthly table keeps
+  earlier months. `mart.lead_history` compares each snapshot with the previous one: new or dropped
+  leads, tier changes, and why a company changed (re-linked, declared figures changed, or Google
+  activity changed). `relinked_since_last_run` flags link drift.
+- **App state:** saved SQL queries live in a small app-state database (SQLite on its own Docker
+  volume), separate from both the read-only warehouse and the code. This is the same pattern as
+  Athena named queries or Hue's saved queries.
 - **Data quality:** 18 DQ assertions; an `error` blocks the export.
 - **Cost:**
   - Google uses Nearby Search with Enterprise fields and a density-aware quadtree (distance
@@ -102,9 +116,6 @@ pytest/Hypothesis in CI.
 - **Lagging and partial declared data:** revenue comes from filed statements, and the FY2025 open
   export covers ~3% of companies. VMI does not document which taxpayers it publishes. Sodra hides
   wages and contributions at ≤3 insured.
-- **Review timeframe:** Google reviews cannot be limited to the tax year with the official API, which
-  returns only a lifetime count and 5 sample reviews. Review dates are available only by scraping the
-  review list (SerpApi or Oxylabs), at about 1 request per 10–20 reviews. That is affordable for the
-  shortlist, not the whole city.
+- **Review timeframe:** visible activity is a lifetime average, not reviews in the tax year (see §4).
 - **Revenue:** FY2025 statements are filed (they appear on each company's Registrų centras documents
   page), but the open-data export still holds FY2024 for most companies.

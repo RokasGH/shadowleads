@@ -34,7 +34,8 @@ services:
       - "8501:8501"
     volumes:
       - warehouse:/app/data:ro
-      - ./queries:/app/queries   # saved SQL console queries persist on the host
+      - appstate:/app/state      # app state (saved SQL queries), separate from code and data
 
 volumes:
   warehouse:
+  appstate:

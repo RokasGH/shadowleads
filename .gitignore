@@ -3,6 +3,7 @@
 
 # data (raw landing zone, caches, warehouse) - never committed
 data/
+state/
 output/*/raw/
 
 # python

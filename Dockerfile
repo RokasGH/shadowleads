@@ -20,11 +20,10 @@ COPY src ./src
 COPY app ./app
 COPY examples ./examples
 COPY labels ./labels
-COPY queries ./queries
 RUN uv sync --frozen --no-dev
 
-RUN useradd --create-home --uid 1000 analyst && mkdir -p /app/data /app/output \
-    && chown -R analyst /app/data /app/output /app/queries
+RUN useradd --create-home --uid 1000 analyst && mkdir -p /app/data /app/output /app/state \
+    && chown -R analyst /app/data /app/output /app/state
 USER analyst
 
 ENTRYPOINT ["shadowleads"]

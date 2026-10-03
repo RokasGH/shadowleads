@@ -6,9 +6,9 @@ Run: `streamlit run app/streamlit_app.py` (or `docker compose up`).
 
 from __future__ import annotations
 
-import json
 import math
 import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,7 +19,9 @@ import pydeck as pdk
 import streamlit as st
 
 DB_PATH = Path(os.environ.get("SHADOWLEADS_DATA_DIR", "data")) / "warehouse.duckdb"
-QUERIES_FILE = Path(os.environ.get("SHADOWLEADS_QUERIES_FILE", "queries/saved_queries.json"))
+# Application state (saved queries) lives in its own small database, separate from the read-only
+# warehouse and from the code - like Athena named queries or Hue's saved queries.
+STATE_DB = Path(os.environ.get("SHADOWLEADS_STATE_DIR", "state")) / "app_state.sqlite"
 
 st.set_page_config(page_title="Shadow-economy leads · Vilnius", page_icon="🔎", layout="wide")
 
@@ -209,8 +211,20 @@ def reasons(r: pd.Series) -> list[str]:
     return out
 
 
+def snapshots() -> list[str]:
+    return [
+        m
+        for (m,) in connection()
+        .execute("SELECT DISTINCT run_month FROM mart.lead ORDER BY 1 DESC")
+        .fetchall()
+    ]
+
+
 def snapshot() -> str | None:
-    return scalar("SELECT max(run_month) FROM mart.lead")
+    """Snapshot (run month) chosen in the sidebar; defaults to the latest."""
+    available = snapshots()
+    chosen = st.session_state.get("snapshot")
+    return chosen if chosen in available else (available[0] if available else None)
 
 
 # ----------------------------------------------------------------------------- leads
@@ -247,7 +261,9 @@ def page_leads() -> None:
         """SELECT l.priority_rank AS "#", l.tier, l.legal_name, l.ja_kodas, l.main_category,
                   p.formatted_address AS main_address, p.maps_uri AS google_maps, l.n_places,
                   l.reviews_total, l.rating_weighted, l.taxes_paid, l.peer_median_taxes,
-                  l.insured_avg, l.revenue, l.revenue_fy, l.score, l.n_signals, l.hold_reason
+                  l.insured_avg, l.revenue, l.revenue_fy, l.score, l.n_signals,
+                  coalesce(l.hold_reason, CASE WHEN l.tier = 'A_priority'
+                           THEN 'meets all Priority A conditions' END) AS hold_reason
            FROM mart.lead l
            LEFT JOIN core.place_snapshot p
              ON p.run_month = l.run_month AND p.place_id = l.place_ids[1]
@@ -258,7 +274,10 @@ def page_leads() -> None:
     show(
         df,
         column_config={
-            "google_maps": st.column_config.LinkColumn("Google Maps", display_text="open map")
+            "google_maps": st.column_config.LinkColumn("Google Maps", display_text="open map"),
+            "legal_name": st.column_config.TextColumn("legal_name", width="medium"),
+            "main_address": st.column_config.TextColumn("main_address", width="medium"),
+            "hold_reason": st.column_config.TextColumn("hold_reason", width="large"),
         },
     )
     st.download_button(
@@ -469,9 +488,10 @@ def lead_detail(month: str, ja: int) -> None:
 def page_coverage() -> None:
     st.title("Coverage")
     st.caption(
-        "Which Google places could be tied to a registered company. Blue = linked, red = not "
-        "linked (no candidate, ambiguous, or likely a natural person). Hover a dot for details; "
-        "dot size grows with the number of reviews."
+        "Which Google places could be tied to a registered company. **Purple** = Priority A lead, "
+        "**orange** = watchlist, blue = linked (not flagged), red = not linked (no candidate, "
+        "ambiguous, or likely a natural person). Hover a dot for details; dot size grows with "
+        "the number of reviews."
     )
     month = snapshot()
     stats = q(
@@ -485,10 +505,14 @@ def page_coverage() -> None:
         [month],
     )
     show(stats)
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     cats = c1.multiselect(
         "Category", list(CATEGORY_LABEL), default=list(CATEGORY_LABEL),
         format_func=lambda c: CATEGORY_LABEL.get(c, c), key="cov_cat",
+    )  # fmt: skip
+    tiers = c3.multiselect(
+        "Tier", [*TIER_LABEL, "not_scored"], default=[*TIER_LABEL, "not_scored"],
+        format_func=lambda t: TIER_LABEL.get(t, "Not scored (no linked company)"), key="cov_tier",
     )  # fmt: skip
     status = c2.multiselect(
         "Link status", ["linked", "ambiguous", "unmatched"],
@@ -497,18 +521,24 @@ def page_coverage() -> None:
     pts = q(
         """SELECT p.name, coalesce(p.formatted_address, '') AS address, p.category,
                   coalesce(p.user_rating_count, 0) AS reviews, p.lat, p.lng, l.status,
-                  coalesce(e.legal_name, '-') AS company, coalesce(ml.tier, '-') AS tier
+                  coalesce(e.legal_name, '-') AS company, coalesce(ml.tier, 'not_scored') AS tier
            FROM core.place_snapshot p
            JOIN core.place_entity_link l USING (run_month, place_id)
            LEFT JOIN core.entity e ON e.ja_kodas = l.ja_kodas
            LEFT JOIN mart.lead ml ON ml.run_month = p.run_month AND ml.ja_kodas = l.ja_kodas
            WHERE p.run_month = ? AND p.in_scope
-             AND list_contains(?, p.category) AND list_contains(?, l.status)""",
-        [month, cats, status],
+             AND list_contains(?, p.category) AND list_contains(?, l.status)
+             AND list_contains(?, coalesce(ml.tier, 'not_scored'))""",
+        [month, cats, status, tiers],
     )
-    pts["color"] = pts["status"].map(
-        lambda s: [31, 119, 180, 170] if s == "linked" else [214, 39, 40, 170]
-    )
+    tier_colors = {
+        "A_priority": [128, 0, 128, 220],
+        "B_watchlist": [255, 140, 0, 200],
+    }
+    pts["color"] = [
+        tier_colors.get(t, [31, 119, 180, 150] if st_ == "linked" else [214, 39, 40, 150])
+        for t, st_ in zip(pts["tier"], pts["status"], strict=True)
+    ]
     pts["radius"] = pts["reviews"].map(lambda n: 12 + 5 * math.sqrt(n))
     layer = pdk.Layer(
         "ScatterplotLayer", data=pts, get_position="[lng, lat]", get_fill_color="color",
@@ -529,6 +559,41 @@ def page_coverage() -> None:
     st.caption(f"{len(pts):,} places shown.")
 
 
+# ----------------------------------------------------------------------------- history
+def page_history() -> None:
+    st.title("Month over month")
+    st.caption(
+        "Each monthly run is stored as a snapshot. This page compares the selected snapshot with "
+        "the one before it: new and dropped leads, tier changes and *why* a company changed - "
+        "because it was linked to a different company, because its declared figures changed, or "
+        "because its Google activity changed."
+    )
+    months = snapshots()
+    show(q("SELECT * FROM mart.category_summary ORDER BY run_month DESC, main_category"))
+    if len(months) < 2:
+        st.info(
+            f"Only one snapshot ({months[0] if months else '-'}) is stored so far. Changes appear "
+            "here after the next monthly run (`shadowleads run --run-month YYYY-MM`)."
+        )
+        return
+    month = snapshot()
+    st.subheader(f"Changes in {month}")
+    show(
+        q(
+            """SELECT legal_name, ja_kodas, main_category, prev_tier, tier, prev_score, score,
+                      score_change, months_flagged, first_priority_month, change_type, change_reason
+               FROM mart.lead_history
+               WHERE run_month = ?
+                 AND (tier IN ('A_priority', 'B_watchlist') OR prev_tier IN ('A_priority', 'B_watchlist'))
+               ORDER BY tier, score DESC""",
+            [month],
+        ),
+        column_config={
+            "change_reason": st.column_config.TextColumn("change_reason", width="large")
+        },
+    )
+
+
 # ----------------------------------------------------------------------------- data quality
 def page_quality() -> None:
     st.title("Data quality")
@@ -543,8 +608,10 @@ def page_quality() -> None:
     show(
         q(
             "SELECT check_name, description, severity, passed, observed, expected "
-            "FROM meta.dq_result ORDER BY passed, severity, check_name"
-        )
+            "FROM meta.dq_result WHERE run_month = ? ORDER BY passed, severity, check_name",
+            [snapshot()],
+        ),
+        column_config={"description": st.column_config.TextColumn("description", width="large")},
     )
     st.subheader("Source files")
     st.caption(
@@ -562,7 +629,8 @@ def page_quality() -> None:
 TABLE_HELP = {
     "mart.lead": "One row per company: score, tier, hold reason, peer figures, signals. Start here.",
     "mart.entity_activity": "Per company: Google activity summed over its places, declared figures, flags.",
-    "mart.category_summary": "Per category: scored companies, flagged share, medians.",
+    "mart.category_summary": "Per category and snapshot: scored companies, flagged share, medians.",
+    "mart.lead_history": "Per company and snapshot: tier and score vs the previous snapshot, and why it changed.",
     "core.place_snapshot": "Every Google place found (name, address, reviews, rating, hours, website, map link).",
     "core.place_entity_link": "Which company each Google place was linked to, how, and why not when unlinked.",
     "core.link_validation": "Trust checks on each link (activity fit, address, independent evidence, audit).",
@@ -597,20 +665,43 @@ WHERE p.in_scope AND l.status <> 'linked' ORDER BY reviews DESC NULLS LAST LIMIT
 }
 
 
-def load_saved() -> dict[str, dict[str, str]]:
-    try:
-        return json.loads(QUERIES_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {name: {"sql": sql, "saved_at": "built-in"} for name, sql in SEED_QUERIES.items()}
+def state() -> sqlite3.Connection:
+    STATE_DB.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(STATE_DB)
+    con.execute(
+        """CREATE TABLE IF NOT EXISTS saved_query (
+               name TEXT PRIMARY KEY, sql TEXT NOT NULL, description TEXT,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""
+    )
+    if not con.execute("SELECT count(*) FROM saved_query").fetchone()[0]:
+        now = datetime.now().isoformat(timespec="seconds")
+        con.executemany(
+            "INSERT INTO saved_query VALUES (?, ?, 'built-in example', ?, ?)",
+            [(name, sql, now, now) for name, sql in SEED_QUERIES.items()],
+        )
+        con.commit()
+    return con
 
 
-def store_saved(saved: dict[str, dict[str, str]]) -> str | None:
-    try:
-        QUERIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        QUERIES_FILE.write_text(json.dumps(saved, indent=2, ensure_ascii=False), encoding="utf-8")
-        return None
-    except OSError as exc:
-        return str(exc)
+def load_saved() -> dict[str, str]:
+    with state() as con:
+        return dict(con.execute("SELECT name, sql FROM saved_query ORDER BY name").fetchall())
+
+
+def save_query(name: str, sql: str) -> None:
+    now = datetime.now().isoformat(timespec="seconds")
+    with state() as con:
+        con.execute(
+            """INSERT INTO saved_query (name, sql, description, created_at, updated_at)
+               VALUES (?, ?, NULL, ?, ?)
+               ON CONFLICT(name) DO UPDATE SET sql = excluded.sql, updated_at = excluded.updated_at""",
+            (name, sql, now, now),
+        )
+
+
+def delete_query(name: str) -> None:
+    with state() as con:
+        con.execute("DELETE FROM saved_query WHERE name = ?", (name,))
 
 
 def filter_sql(table: str, column: str, op: str, value: str) -> str:
@@ -638,13 +729,15 @@ def page_sql() -> None:
             "2. **Write SQL** (DuckDB dialect) and press **Run**. The warehouse is opened "
             "read-only - nothing you run can change the data.\n"
             "3. **Download** any result as CSV.\n"
-            "4. **Save** a query under a name to reuse it later; **Load** or **Delete** saved ones.\n\n"
+            "4. **Save** a query under a name to reuse it later (saving an existing name updates "
+            "it); **Load** or **Delete** saved ones. Saved queries are shared by everyone using "
+            "this app instance.\n\n"
             "Tips: tables are `schema.table` (e.g. `mart.lead`); `ILIKE '%text%'` for "
             "case-insensitive search; add `LIMIT 100` for quick looks; amounts are in EUR."
         )
     saved = load_saved()
     if "sql_text" not in st.session_state:
-        st.session_state.sql_text = next(iter(saved.values()))["sql"] if saved else ""
+        st.session_state.sql_text = next(iter(saved.values()), "")
 
     left, right = st.columns([1, 2])
     with left:
@@ -687,24 +780,19 @@ def page_sql() -> None:
         c1, c2, c3 = st.columns([3, 1, 1])
         chosen = c1.selectbox("Saved queries", ["(choose)", *saved])
         if c2.button("Load", disabled=chosen == "(choose)"):
-            st.session_state.sql_text = saved[chosen]["sql"]
+            st.session_state.sql_text = saved[chosen]
             st.rerun()
         if c3.button("Delete", disabled=chosen == "(choose)"):
-            saved.pop(chosen, None)
-            err = store_saved(saved)
-            st.toast(f"Could not delete: {err}" if err else f"Deleted '{chosen}'")
+            delete_query(chosen)
+            st.toast(f"Deleted '{chosen}'")
             st.rerun()
         sql = st.text_area("SQL", key="sql_text", height=200)
         run = st.button("Run", type="primary")
         s1, s2 = st.columns([3, 1])
         name = s1.text_input("Save as", placeholder="name for this query")
         if s2.button("Save", disabled=not name.strip()):
-            saved[name.strip()] = {
-                "sql": sql,
-                "saved_at": datetime.now().isoformat(timespec="seconds"),
-            }
-            err = store_saved(saved)
-            st.toast(f"Could not save: {err}" if err else f"Saved '{name.strip()}'")
+            save_query(name.strip(), sql)
+            st.toast(f"Saved '{name.strip()}'")
         if run:
             try:
                 res = q(sql)
@@ -724,10 +812,16 @@ if __name__ != "__main__":
 elif not DB_PATH.exists():
     st.error(f"Warehouse not found at {DB_PATH}. Run the pipeline first (`docker compose up`).")
 else:
+    available = snapshots()
+    if available:
+        st.sidebar.selectbox(
+            "Snapshot", available, key="snapshot", help="Monthly run to show on every page."
+        )
     st.navigation(
         [
             st.Page(page_leads, title="Leads", icon="🔎", default=True),
             st.Page(page_coverage, title="Coverage & map", icon="🗺️", url_path="coverage"),
+            st.Page(page_history, title="Month over month", icon="📈", url_path="history"),
             st.Page(page_quality, title="Data quality", icon="✅", url_path="data-quality"),
             st.Page(page_sql, title="SQL console", icon="🧮", url_path="sql"),
         ]

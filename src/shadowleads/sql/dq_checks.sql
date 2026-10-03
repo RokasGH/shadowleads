@@ -2,7 +2,7 @@
 -- Each check states what it protects against, the observed value, the exact expectation and unit.
 -- severity 'error' blocks the lead export; 'warn' is shown to the analyst next to the leads.
 
-CREATE OR REPLACE TABLE meta.dq_result AS
+CREATE OR REPLACE TEMP TABLE _dq AS
 WITH checks (check_name, description, severity, observed, op, threshold, unit) AS (
     -- volumes: a truncated download must never silently shrink the universe
     SELECT 'jar_rows', 'Companies loaded from the JAR register', 'error',
@@ -44,6 +44,15 @@ WITH checks (check_name, description, severity, observed, op, threshold, unit) A
     UNION ALL SELECT 'links_in_conflict', 'Share of links contradicted by independent evidence', 'warn',
            (SELECT 100.0 * count(*) FILTER (WHERE validation_status = 'conflict') / nullif(count(*), 0)
               FROM core.link_validation WHERE run_month = '{run_month}'), '<=', 10, '%'
+    UNION ALL SELECT 'places_change_vs_previous_snapshot', 'Change in the number of in-scope places vs the previous snapshot (0 when there is none)', 'warn',
+           coalesce((SELECT abs(100.0 * (cur - prev) / nullif(prev, 0)) FROM (
+               SELECT count(*) FILTER (WHERE run_month = '{run_month}') AS cur,
+                      count(*) FILTER (WHERE run_month = (SELECT max(run_month) FROM core.place_snapshot
+                                                          WHERE run_month < '{run_month}')) AS prev
+               FROM core.place_snapshot WHERE in_scope)), 0), '<=', 20, '%'
+    UNION ALL SELECT 'links_changed_vs_previous_snapshot', 'Places now linked to a different company than in the previous snapshot', 'warn',
+           (SELECT count(*) FILTER (WHERE relinked_since_last_run) FROM core.link_validation
+              WHERE run_month = '{run_month}'), '<=', 25, 'places'
     UNION ALL SELECT 'audited_links_correct', 'Share of manually audited links judged correct', 'warn',
            (SELECT 100.0 * count(*) FILTER (WHERE verdict = 'correct') / nullif(count(*), 0)
               FROM core.link_audit_label), '>=', 80, '%'
@@ -66,3 +75,7 @@ SELECT
                 ELSE format('{{:,}}', threshold::BIGINT) || ' ' || unit END   AS expected,
     now()::TIMESTAMP                                                        AS checked_at
 FROM checks;
+
+CREATE TABLE IF NOT EXISTS meta.dq_result AS SELECT * FROM _dq WHERE false;
+DELETE FROM meta.dq_result WHERE run_month = '{run_month}';
+INSERT INTO meta.dq_result BY NAME SELECT * FROM _dq;

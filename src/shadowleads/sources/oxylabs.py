@@ -42,6 +42,12 @@ def build_query(name: str, street: str | None, number: str | None) -> str:
     return " ".join(p for p in (name, address, "Vilnius įmonės kodas") if p)
 
 
+def build_query_variant(name: str, street: str | None, number: str | None) -> str:
+    """Second phrasing for places a first search did not resolve (directory-style wording)."""
+    address = " ".join(p for p in (street, number) if p)
+    return " ".join(p for p in (name, address, "Vilnius UAB rekvizitai") if p)
+
+
 def codes_from_serp(payload: dict[str, Any], name_hint: str | None = None) -> Counter[str]:
     """Company codes quoted in organic result titles/snippets, counted across results.
 
@@ -51,6 +57,8 @@ def codes_from_serp(payload: dict[str, Any], name_hint: str | None = None) -> Co
     """
     tokens = name_key(name_hint).split() if name_hint else []
     counts: Counter[str] = Counter()
+    if name_hint is not None and not tokens:
+        return counts  # a purely generic name ("Kirpykla") cannot be recognised in a snippet
     for result in payload.get("results", []):
         content = result.get("content") or {}
         organic = content.get("results", {}).get("organic", []) if isinstance(content, dict) else []
@@ -206,3 +214,28 @@ def employers_from_serp(payload: dict[str, Any], brand: str) -> set[str]:
             if tokens and all(t in fold(text).split() for t in tokens):
                 names |= company_names_in(text)
     return names
+
+
+def reparse_cached(con: duckdb.DuckDBPyConnection, client: SerpClient, run_month: str) -> int:
+    """Recompute stg.serp_code hit counts from cached responses (after a parsing-rule change)."""
+    rows = con.execute(
+        """SELECT DISTINCT s.place_id, s.purpose, s.query, p.name
+           FROM stg.serp_code s JOIN core.place_snapshot p USING (run_month, place_id)
+           WHERE s.run_month = ?""",
+        [run_month],
+    ).fetchall()
+    out: list[list[Any]] = []
+    for place_id, purpose, query, name in rows:
+        payload = client.cached(query)
+        if payload is None:
+            continue
+        named = codes_from_serp(payload, name)
+        out.append([run_month, place_id, purpose, query, None, 0, 0])
+        out += [
+            [run_month, place_id, purpose, query, code, n, named.get(code, 0)]
+            for code, n in codes_from_serp(payload).items()
+        ]
+    con.execute("DELETE FROM stg.serp_code WHERE run_month = ?", [run_month])
+    if out:
+        con.executemany("INSERT INTO stg.serp_code VALUES (?, ?, ?, ?, ?, ?, ?)", out)
+    return len(rows)

@@ -187,7 +187,10 @@ def fetch_serp(
                 run_month VARCHAR, place_id VARCHAR, purpose VARCHAR, query VARCHAR,
                 code VARCHAR, hits INTEGER, hits_named INTEGER)"""
         )
-        con.execute("DELETE FROM stg.serp_code WHERE run_month = ?", [month])
+        con.execute(
+            "DELETE FROM stg.serp_code WHERE run_month = ? AND purpose IN ('fallback', 'validation')",
+            [month],
+        )
         cols = ["place_id", "purpose", "query", "code", "hits", "hits_named"]
         if rows:
             con.executemany(
@@ -242,13 +245,95 @@ def fetch_job_ads(
 
 
 @app.command
+def resolve_busiest(
+    run_month: RunMonth | None = None, *, queries: int = 300, total_budget: int = 760
+) -> None:
+    """Extra Oxylabs company-code searches for the busiest places still not linked.
+
+    Places never searched get the standard query; places already searched without a result get a
+    second phrasing. `total_budget` caps all Oxylabs calls of the run (keeps a buffer for re-runs).
+    """
+    from shadowleads.sources.oxylabs import (
+        SerpClient,
+        build_query,
+        build_query_variant,
+        run_serp_lookups,
+    )
+
+    s = get_settings()
+    if not s.has_oxylabs or s.oxylabs_password is None or s.oxylabs_username is None:
+        raise SystemExit("OXYLABS_USERNAME / OXYLABS_PASSWORD are not set")
+    month = run_month or current_run_month()
+    with session(s.db_path) as con:
+        rows = con.execute(
+            """
+            SELECT p.place_id, p.name, p.street, p.street_number,
+                   p.place_id IN (SELECT place_id FROM stg.serp_code WHERE purpose = 'fallback') AS searched
+            FROM core.place_snapshot p JOIN core.place_entity_link l USING (run_month, place_id)
+            WHERE p.run_month = ? AND p.in_scope AND NOT p.self_service AND l.status <> 'linked'
+            ORDER BY p.user_rating_count DESC NULLS LAST
+            LIMIT ?
+            """,
+            [month, queries],
+        ).fetchall()
+        variant = {pid: searched for pid, _, _, _, searched in rows}
+        client = SerpClient(
+            con, username=s.oxylabs_username, password=s.oxylabs_password.get_secret_value(),
+            api_url=s.oxylabs_api_url, geo_location=s.oxylabs_geo_location,
+            cache_dir=s.raw_dir / "serp" / month, run_month=month, budget=total_budget,
+        )  # fmt: skip
+        targets = [(pid, "resolve_busiest", name, st, no) for pid, name, st, no, _ in rows]
+        by_name = {(name, st, no): pid for pid, name, st, no, _ in rows}
+
+        def query(name: str, st: str | None, no: str | None) -> str:
+            pid = by_name[(name, st, no)]
+            return (build_query_variant if variant[pid] else build_query)(name, st, no)
+
+        found = run_serp_lookups(client, targets, query_fn=query)
+        con.execute(
+            "DELETE FROM stg.serp_code WHERE run_month = ? AND purpose = 'resolve_busiest'", [month]
+        )
+        cols = ["place_id", "purpose", "query", "code", "hits", "hits_named"]
+        if found:
+            con.executemany(
+                "INSERT INTO stg.serp_code VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [[month, *(r[c] for c in cols)] for r in found],
+            )
+        log.info(
+            "resolve_busiest.done", targets=len(targets), second_phrasing=sum(variant.values()),
+            codes=sum(1 for r in found if r["code"]), calls=client.calls_this_run(),
+        )  # fmt: skip
+
+
+@app.command
+def reparse_serp(run_month: RunMonth | None = None) -> None:
+    """Re-derive company codes from cached Oxylabs responses (no API calls)."""
+    from shadowleads.sources.oxylabs import SerpClient, reparse_cached
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path) as con:
+        client = SerpClient(
+            con, username="", password="", api_url=s.oxylabs_api_url,
+            geo_location=s.oxylabs_geo_location, cache_dir=s.raw_dir / "serp" / month,
+            run_month=month, budget=0,
+        )  # fmt: skip
+        n = reparse_cached(con, client, month)
+    log.info("reparse_serp.done", queries=n)
+
+
+@app.command
 def link_fallback(run_month: RunMonth | None = None) -> None:
     """Resolve ambiguous/unmatched places with independent code evidence; cross-check links."""
     from shadowleads.linking.fallback import run_fallback
+    from shadowleads.linking.matcher import run_primary_linking
 
     s = get_settings()
+    month = run_month or current_run_month()
     with session(s.db_path) as con:
-        run_fallback(con, run_month or current_run_month())
+        # start from the primary decisions so a re-run never keeps a stale fallback link
+        run_primary_linking(con, month)
+        run_fallback(con, month)
 
 
 @app.command
@@ -265,7 +350,7 @@ def validate(run_month: RunMonth | None = None) -> None:
                 "CREATE OR REPLACE TABLE core.link_audit_label AS "
                 "SELECT place_id, CAST(ja_kodas AS BIGINT) AS ja_kodas, lower(trim(verdict)) AS verdict, "
                 "auditor, TRY_CAST(audited_on AS DATE) AS audited_on, note "
-                "FROM read_csv(?, header=true, all_varchar=true) "
+                "FROM read_csv(?, header=true, all_varchar=true, union_by_name=true) "
                 "WHERE lower(trim(verdict)) IN ('correct', 'wrong')",
                 [[str(p) for p in labels]],
             )
