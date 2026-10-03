@@ -77,7 +77,7 @@ pytest/Hypothesis in CI.
   carry the fetch ids.
 - **Idempotent runs:** each stage is idempotent per run month; history is kept per month
   (`mart.lead_history`).
-- **Data quality:** 19 DQ assertions; an `error` blocks the export.
+- **Data quality:** 18 DQ assertions; an `error` blocks the export.
 - **Cost:**
   - Google uses Nearby Search with Enterprise fields and a density-aware quadtree (distance
     ranking, k×k splits); ~1,100 calls cover the city. Every response is cached and every call

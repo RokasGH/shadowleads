@@ -1,0 +1,10 @@
+.env
+.venv
+data
+output
+.git
+.pytest_cache
+.ruff_cache
+.hypothesis
+**/__pycache__
+labels/*.csv
