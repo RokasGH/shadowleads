@@ -24,7 +24,7 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 | Google places in scope | 1,665 | 361 | 1,347 |
 | Linked to a legal entity | 17% | 49% | 42% |
 | ... share of all Google reviews covered | 41% | 68% | 68% |
-| Priority A / watchlist leads | 8 / 12 | 0 / 7 | 2 / 11 |
+| Priority A / watchlist leads | 9 / 11 | 1 / 6 | 2 / 11 |
 
 - 4,017 places swept, 1,031 linked, of which 803 links are trusted enough to feed Priority A.
 - Two manual audits of stratified links:
@@ -105,7 +105,8 @@ Every candidate, its evidence and the decision are stored (`core.match_candidate
 **Validation** (`core.link_validation`) works in levels: name and address rules, then independent
 evidence, brand-level evidence, plausibility checks, manual verification and analyst overrides. The
 manual methods are those used in the audits: website footer, privacy policy, phone match, only
-business at the address, listing sanity, scale and age plausibility, and franchise check. See
+business at the address, listing sanity, scale plausibility, franchise check, and premises
+licence lookup. See
 [labels/README.md](labels/README.md) for the levels and how to audit, and `shadowleads audit-sample`
 to draw a new sample.
 
@@ -138,7 +139,10 @@ Priority A is capped at 20 per month (the analyst's capacity) and requires *all*
 - a visibly busy business;
 - peers paying at least 3× more tax;
 - an entity at least 12 months old, with a VMI record (missing data is never treated as zero);
-- no other company at the same premises;
+- a VMI tax row for the tax year itself: when only earlier years are published, the score assumes €0
+  and the lead stays on the watchlist until the analyst verifies it;
+- the venue is not linked to a second company (one venue run by two companies splits the declared
+  figures; different businesses in the same building do not count);
 - no sign that the reviews predate the operator;
 - at least one corroborating signal (two if the rating is extreme).
 

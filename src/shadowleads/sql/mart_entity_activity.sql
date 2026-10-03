@@ -42,17 +42,25 @@ visible AS (
         list(DISTINCT validation_status)                    AS validation_statuses
     FROM lp GROUP BY ja_kodas
 ),
-shared AS (  -- other linked entities at the same premises (declared figures may be split)
+shared AS (
+    -- the SAME venue linked to another company too (declared figures may be split between them):
+    -- same building AND the same / near-identical business name. Different businesses in a
+    -- multi-tenant building (salons in a beauty centre) are not shared premises.
     SELECT DISTINCT a.ja_kodas
     FROM lp a JOIN lp b
       ON lower(a.street) = lower(b.street) AND a.street_number = b.street_number
      AND a.ja_kodas <> b.ja_kodas
+     AND (jaro_winkler_similarity(lower(a.name), lower(b.name)) >= 0.9
+          OR contains(lower(a.name), lower(b.name)) OR contains(lower(b.name), lower(a.name)))
 ),
 vmi AS (
     SELECT
         ja_kodas,
         max(taxes_paid) FILTER (WHERE year = (SELECT vmi_current_year FROM params) - 1) AS taxes_prev_year,
         max(taxes_paid) FILTER (WHERE year = (SELECT vmi_current_year FROM params) - 2) AS taxes_prev_year_2,
+        bool_or(year = (SELECT vmi_current_year FROM params) - 1)                       AS taxes_has_tax_year_row,
+        arg_max(year, year) FILTER (WHERE year < (SELECT vmi_current_year FROM params)) AS taxes_last_reported_year,
+        arg_max(taxes_paid, year) FILTER (WHERE year < (SELECT vmi_current_year FROM params)) AS taxes_last_reported,
         max(taxes_paid) FILTER (WHERE year = (SELECT vmi_current_year FROM params))     AS taxes_ytd,
         max(through_month) FILTER (WHERE year = (SELECT vmi_current_year FROM params))  AS taxes_ytd_through_month,
         max(updated_on)                                                                 AS taxes_updated_on,
@@ -98,6 +106,8 @@ SELECT
     e.other_municipality_branches, e.vilnius_branches,
     vm.taxes_prev_year, vm.taxes_prev_year_2, vm.taxes_ytd, vm.taxes_ytd_through_month,
     vm.taxes_updated_on, vm.ja_kodas IS NOT NULL AS has_vmi_record,
+    coalesce(vm.taxes_has_tax_year_row, false) AS taxes_has_tax_year_row,
+    vm.taxes_last_reported_year, vm.taxes_last_reported,
     coalesce(so.insured_avg_prev_year, 0)  AS insured_avg_prev_year,
     so.contributions_prev_year, coalesce(so.contribution_months_suppressed, 0) AS contribution_months_suppressed,
     coalesce(so.insured_avg_t12m, 0)       AS insured_avg_t12m,

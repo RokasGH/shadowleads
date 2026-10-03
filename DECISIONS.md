@@ -43,8 +43,9 @@ examples, is in [labels/README.md](labels/README.md).
   franchisor website; the listing is not an erroneous entry.
 - **Level 4:** manual methods taken from the audit notes. Website footer, privacy policy or terms of
   service, phone number via a company directory, only business of its kind at the address, Google
-  listing sanity, scale plausibility (a brewery is not a bar operator), age plausibility, franchise
-  check.
+  listing sanity, scale plausibility (a brewery is not a bar operator), franchise check, and the
+  premises licence (hygiene passport) in the LIS register. Company age vs venue age was rejected as
+  unreliable.
 - **Level 5:** analyst overrides (`labels/link_overrides.csv`), applied on every run.
 
 **Audit 1** covered 48 links and found 75% correct. It drove these fixes:
@@ -95,8 +96,10 @@ scales linearly with reviews), and an ML model (no ground truth; not explainable
 
 ## 5. Cost of a false accusation is designed in
 Priority A (capped at 20/month, the analyst's capacity) requires all of: a usable link, a visibly
-busy entity, peers paying at least 3x more tax, no shared premises, the entity at least 12 months
-old, a VMI record (missing ≠ zero), no sign that reviews predate the operator, and at least one
+busy entity, peers paying at least 3x more tax, no shared venue (the same venue linked to a second
+company, not just another business in the building), the entity at least 12 months old, a VMI
+record (missing ≠ zero) including a row for the tax year itself (a missing year is scored as €0 but
+held on the watchlist for verification), no sign that reviews predate the operator, and at least one
 corroborating signal (≥2 if the rating is extreme):
 - near-zero declared figures;
 - opening hours that need more staff than declared;

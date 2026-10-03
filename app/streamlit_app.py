@@ -178,6 +178,16 @@ def reasons(r: pd.Series) -> list[str]:
             f"reviews/yr) paid a median **{eur(r.peer_median_taxes)}** in VMI taxes in "
             f"{int(r.tax_year)}; this company paid **{eur(r.taxes_paid)}** ({share} of peers)."
         )
+    if r.get("taxes_assumed_zero") is True:
+        last = (
+            f"last published: {int(r.taxes_last_reported_year)} {eur(r.taxes_last_reported)}"
+            if pd.notna(r.taxes_last_reported_year)
+            else "no earlier year either"
+        )
+        out.append(
+            f"**Tax data gap:** VMI publishes no {int(r.tax_year)} row for this company ({last}); "
+            "the score assumes €0 for that year - check before inspecting."
+        )
     if pd.notna(r.insured_avg):
         contrib = (
             eur(r.contributions) if pd.notna(r.contributions) else "hidden by Sodra (≤3 insured)"
@@ -471,7 +481,8 @@ def lead_detail(month: str, ja: int) -> None:
                 "site, not an erroneous Google listing.\n"
                 "4. **Manual checks** (audit): website footer, privacy policy / terms, phone number "
                 "via a company directory, only business of its kind at the address, listing "
-                "sanity, scale and age plausibility, franchise check.\n"
+                "sanity, scale plausibility, franchise check, premises licence (hygiene passport) "
+                "in the LIS register.\n"
                 "5. **Analyst override**: the verified decision is recorded and applied every run."
             )
     with tab_src:

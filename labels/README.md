@@ -54,10 +54,12 @@ an analyst does during an audit. Every level 4 method below comes from the audit
 6. **Scale plausibility:** a national company (a brewery behind the "Švyturys" bar name) is the
    brand owner, not the bar operator. Multi-location chains (H2Auto, Inter Cars, Carglass) can be
    correct links, but their declared figures cover every location.
-7. **Age plausibility:** a company younger than the venue suggests an operator change. Leave the
-   verdict empty when two candidates remain (BIX Baras: Artistai vs Etmonai).
-8. **Franchise check:** a franchised location may be run by a different company from the brand.
+7. **Franchise check:** a franchised location may be run by a different company from the brand.
    Leave it undetermined unless the operator is confirmed (PRO BRO Express / Švaros broliai).
+8. **Premises licence:** for beauty and cosmetology premises, the hygiene passport in the LIS
+   licence register (licencijavimas.lt) shows the holder and the premises address. This settles
+   whether the website operator also runs the venue, or a specialist works there under individual
+   activity (MB DanNik / Jekaterinos Depiliacija). Manual lookup only: LIS forbids copying.
 
 **Level 5 – record the decision.** Put the verified company (or a rejection) and the evidence used
 in `link_overrides.csv`, so it applies to every future run.
@@ -66,4 +68,6 @@ Candidates for automating level 4:
 - **Phone match:** Google phone vs the phone on the business's own website.
 - **Deeper website scans** that always fetch the privacy-policy page: the scanner currently stops
   after 4 pages, which is why Synth still needed an override.
-- **Age check:** company registration date vs the date of the place's first review.
+
+Not used: comparing the company's age with the venue's age. Operators change, companies are
+re-registered and venues move for many legitimate reasons, so it does not identify the operator.

@@ -139,6 +139,9 @@ SELECT
     s.activity_quintile,
     -- declared
     s.tax_year, s.d_taxes AS taxes_paid, s.taxes_ytd, s.taxes_ytd_through_month,
+    -- no VMI row for the tax year while earlier years exist: the score assumes EUR 0 (shown to analyst)
+    NOT s.taxes_has_tax_year_row AS taxes_assumed_zero,
+    s.taxes_last_reported_year, s.taxes_last_reported,
     s.d_contributions AS contributions, s.contribution_months_suppressed,
     round(s.d_headcount, 2) AS insured_avg, round(s.insured_avg_t12m, 2) AS insured_avg_t12m,
     s.d_revenue AS revenue, s.revenue_fy, s.revenue_is_stale, s.vat_registered,
@@ -172,6 +175,8 @@ SELECT
         WHEN s.gap_taxes < ln(s.min_gap_ratio) THEN 'taxes in line with peers'
         WHEN NOT s.all_links_usable THEN 'link to legal entity not verified enough'
         WHEN s.shared_premises THEN 'premises shared with another linked entity'
+        WHEN NOT s.taxes_has_tax_year_row
+             THEN 'no VMI tax row for ' || s.tax_year || ' (score assumes EUR 0) - verify before inspecting'
         WHEN s.entity_age_months < 36 AND s.reviews_total > 500 THEN 'reviews may predate this operator'
         WHEN (s.sig_near_zero_declared::INT + s.sig_staffing_floor::INT + s.sig_vat_gap::INT)
              < CASE WHEN s.rating_extreme THEN 2 ELSE 1 END
@@ -181,7 +186,7 @@ SELECT
         WHEN s.new_entity OR NOT s.has_vmi_record OR s.score IS NULL THEN 'D_insufficient_evidence'
         WHEN NOT s.enough_reviews OR NOT s.visibly_busy
              OR s.gap_taxes < ln(s.min_gap_ratio) THEN 'C_not_flagged'
-        WHEN s.all_links_usable AND NOT s.shared_premises
+        WHEN s.all_links_usable AND NOT s.shared_premises AND s.taxes_has_tax_year_row
              AND NOT (s.entity_age_months < 36 AND s.reviews_total > 500)
              AND (s.sig_near_zero_declared::INT + s.sig_staffing_floor::INT + s.sig_vat_gap::INT)
                  >= CASE WHEN s.rating_extreme THEN 2 ELSE 1 END
