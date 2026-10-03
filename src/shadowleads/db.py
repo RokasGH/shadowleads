@@ -55,13 +55,14 @@ CREATE TABLE IF NOT EXISTS meta.api_ledger (
 );
 
 CREATE TABLE IF NOT EXISTS meta.dq_result (
-    run_month  VARCHAR NOT NULL,
-    check_name VARCHAR NOT NULL,
-    severity   VARCHAR NOT NULL,   -- error | warn
-    passed     BOOLEAN NOT NULL,
-    observed   VARCHAR,
-    expected   VARCHAR,
-    checked_at TIMESTAMP NOT NULL
+    run_month   VARCHAR NOT NULL,
+    check_name  VARCHAR NOT NULL,
+    description VARCHAR,
+    severity    VARCHAR NOT NULL,   -- error | warn
+    passed      BOOLEAN,
+    observed    VARCHAR,
+    expected    VARCHAR,
+    checked_at  TIMESTAMP NOT NULL
 );
 """
 
@@ -111,6 +112,8 @@ def record_fetch(
     row_count: int | None = None,
 ) -> str:
     fetch_id = uuid.uuid4().hex[:16]
+    # idempotent: re-registering the same artefact (same source + file) replaces the old record
+    con.execute("DELETE FROM meta.source_fetch WHERE source = ? AND path = ?", [source, str(path)])
     con.execute(
         "INSERT INTO meta.source_fetch VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
@@ -135,3 +138,26 @@ def latest_fetch(con: duckdb.DuckDBPyConnection, source: str) -> tuple[str, Path
         [source],
     ).fetchone()
     return (row[0], Path(row[1])) if row else None
+
+
+STAGED_TABLES_WITH_LINEAGE = (
+    "stg.jar_entity", "stg.sodra_monthly", "stg.vmi_taxes", "stg.vmi_register", "stg.rc_revenue",
+    "stg.vmvt_premises",
+)  # fmt: skip
+
+
+def fill_row_counts(con: duckdb.DuckDBPyConnection) -> None:
+    """Rows staged per downloaded file (e.g. Sodra ZIPs are registered before they are parsed)."""
+    existing = {
+        f"{s}.{t}"
+        for s, t in con.execute(
+            "SELECT table_schema, table_name FROM information_schema.tables"
+        ).fetchall()
+    }
+    for table in STAGED_TABLES_WITH_LINEAGE:
+        if table in existing:
+            con.execute(
+                f"""UPDATE meta.source_fetch f SET row_count = s.n
+                    FROM (SELECT fetch_id, count(*) AS n FROM {table} GROUP BY fetch_id) s
+                    WHERE f.fetch_id = s.fetch_id"""
+            )

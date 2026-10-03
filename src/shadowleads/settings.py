@@ -39,10 +39,6 @@ class Settings(BaseSettings):
     oxylabs_geo_location: str = Field("Lithuania", validation_alias=_alias("OXYLABS_GEO_LOCATION"))
     oxylabs_budget: int = Field(300, validation_alias=_alias("SHADOWLEADS_OXYLABS_BUDGET"))
 
-    pseudonym_key: SecretStr = Field(
-        SecretStr("local-dev-only-change-me"), validation_alias=_alias("SHADOWLEADS_PSEUDONYM_KEY")
-    )
-
     @property
     def db_path(self) -> Path:
         return self.data_dir / "warehouse.duckdb"

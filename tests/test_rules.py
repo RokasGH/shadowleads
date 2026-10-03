@@ -1,9 +1,5 @@
 """Regression tests for rules introduced after the manual link audit."""
 
-from hypothesis import given
-from hypothesis import strategies as st
-
-from shadowleads.export import fake_code
 from shadowleads.linking.normalize import is_vilnius_city, parse_lt_address, parse_street
 from shadowleads.linking.resolve import company_names_in
 from shadowleads.sources.trademarks import search_term
@@ -37,10 +33,3 @@ def test_company_names_in_job_ads() -> None:
 def test_trademark_search_term_is_distinctive() -> None:
     assert search_term("7 Fridays Vingis") == "fridays"
     assert search_term("Kirpykla") is None
-
-
-@given(st.integers(100_000_000, 399_999_999))
-def test_pseudonymous_codes_never_collide_with_real_ones(ja: int) -> None:
-    fake = fake_code(b"k", ja)
-    assert 900_000_000 <= fake < 1_000_000_000  # real JAR codes start with 1 or 3
-    assert fake == fake_code(b"k", ja) and fake != fake_code(b"other-key", ja)

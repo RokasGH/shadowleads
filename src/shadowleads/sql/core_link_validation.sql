@@ -1,7 +1,6 @@
 -- Link validation for one run month. Grain: (run_month, place_id) for linked places.
 --   V1 automatic plausibility checks, V2 independent cross-source agreement,
---   V3 manual audit labels (labels/match_audit.csv) and analyst overrides (labels/link_overrides.csv),
---   V4 link stability vs previous month.
+--   V3 manual audit labels (labels/match_audit*.csv) and analyst overrides (labels/link_overrides.csv).
 -- Evidence families: premises (VMVT), website, serp, listing_url, brand (trademark owner / job-ad
 -- employer). Brand-level sources name the company behind a BRAND - for franchises and groups that
 -- is not the venue operator - so they count as one family and never confirm a link on their own.
@@ -48,12 +47,6 @@ v2 AS (
     FROM core.link_agreement WHERE run_month = '{run_month}'
     GROUP BY place_id
 ),
-prev AS (
-    SELECT place_id, ja_kodas AS prev_ja_kodas
-    FROM core.place_entity_link
-    WHERE status = 'linked'
-      AND run_month = (SELECT max(run_month) FROM core.place_entity_link WHERE run_month < '{run_month}')
-),
 audit AS (
     SELECT place_id, ja_kodas, arg_max(verdict, audited_on) AS audit_verdict
     FROM core.link_audit_label GROUP BY ALL
@@ -77,9 +70,6 @@ SELECT
     cs.domain IS NOT NULL                                    AS chain_site,
     -- V3
     a.audit_verdict,
-    -- V4
-    prev.prev_ja_kodas,
-    prev.prev_ja_kodas IS NOT NULL AND prev.prev_ja_kodas <> l.ja_kodas AS relinked_since_last_run,
     CASE
         WHEN l.stage = 'override' THEN 'confirmed_by_audit'
         WHEN a.audit_verdict = 'wrong' THEN 'rejected_by_audit'
@@ -103,7 +93,6 @@ JOIN core.entity e USING (ja_kodas)
 LEFT JOIN chosen c USING (run_month, place_id, ja_kodas)
 LEFT JOIN places_per_entity ppe USING (ja_kodas)
 LEFT JOIN v2 USING (place_id)
-LEFT JOIN prev USING (place_id)
 LEFT JOIN audit a ON a.place_id = l.place_id AND a.ja_kodas = l.ja_kodas
 LEFT JOIN chain_sites cs ON cs.domain = regexp_extract(l.website, 'https?://(?:www\.)?([^/]+)', 1);
 

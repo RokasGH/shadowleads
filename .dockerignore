@@ -7,4 +7,3 @@ output
 .ruff_cache
 .hypothesis
 **/__pycache__
-labels/*.csv

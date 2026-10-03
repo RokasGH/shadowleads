@@ -1,0 +1,22 @@
+{
+  "Share of flagged businesses per category": {
+    "sql": "SELECT main_category, count(*) AS scored,\n       count(*) FILTER (WHERE tier IN ('A_priority','B_watchlist')) AS flagged,\n       round(100.0 * flagged / scored, 1) AS pct_flagged\nFROM mart.lead WHERE tier <> 'D_insufficient_evidence'\nGROUP BY ALL ORDER BY pct_flagged DESC",
+    "saved_at": "built-in"
+  },
+  "Busiest bars paying the least tax per review": {
+    "sql": "SELECT legal_name, reviews_total, taxes_paid, reviews_per_1k_taxes, tier\nFROM mart.lead WHERE main_category = 'nightlife' AND taxes_paid IS NOT NULL\nORDER BY reviews_per_1k_taxes DESC LIMIT 20",
+    "saved_at": "built-in"
+  },
+  "Why were companies not flagged?": {
+    "sql": "SELECT tier, hold_reason, count(*) AS companies\nFROM mart.lead GROUP BY ALL ORDER BY 1, 3 DESC",
+    "saved_at": "built-in"
+  },
+  "Link quality by method": {
+    "sql": "SELECT method, validation_status, count(*) AS links\nFROM core.link_validation GROUP BY ALL ORDER BY 3 DESC",
+    "saved_at": "built-in"
+  },
+  "Busiest places we could not link": {
+    "sql": "SELECT p.name, p.category, p.user_rating_count AS reviews, l.status, l.reason\nFROM core.place_snapshot p JOIN core.place_entity_link l USING (run_month, place_id)\nWHERE p.in_scope AND l.status <> 'linked' ORDER BY reviews DESC NULLS LAST LIMIT 25",
+    "saved_at": "built-in"
+  }
+}

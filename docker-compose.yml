@@ -1,5 +1,5 @@
 # `docker compose up` - one command on a clean machine.
-#   * default: offline demo built from the committed, pseudonymised example (no API calls)
+#   * default: offline demo built from the committed example of a real run (no API calls)
 #   * SHADOWLEADS_MODE=live docker compose up: full live monthly run (needs GOOGLE_MAPS_API_KEY,
 #     optionally OXYLABS_*; spends API quota - budgets are enforced per warehouse)
 # then the analyst app is served on http://localhost:8501
@@ -16,7 +16,6 @@ services:
       SHADOWLEADS_MODE: ${SHADOWLEADS_MODE:-demo}
       SHADOWLEADS_RUN_MONTH: ${SHADOWLEADS_RUN_MONTH:-}
       SHADOWLEADS_GOOGLE_BUDGET: ${SHADOWLEADS_GOOGLE_BUDGET:-900}
-      SHADOWLEADS_PSEUDONYM_KEY: ${SHADOWLEADS_PSEUDONYM_KEY:-}
     volumes:
       - warehouse:/app/data
       - ./output:/app/output
@@ -35,6 +34,7 @@ services:
       - "8501:8501"
     volumes:
       - warehouse:/app/data:ro
+      - ./queries:/app/queries   # saved SQL console queries persist on the host
 
 volumes:
   warehouse:

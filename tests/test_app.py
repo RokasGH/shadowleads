@@ -11,7 +11,7 @@ from shadowleads.db import run_sql_file, session
 from shadowleads.export import load_example
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
-PAGES = ["page_leads", "page_coverage", "page_history", "page_quality", "page_sql"]
+PAGES = ["page_leads", "page_coverage", "page_quality", "page_sql"]
 
 
 @pytest.fixture(scope="module")
@@ -42,21 +42,3 @@ def test_page_renders(page: str, demo_dir: Path, monkeypatch: pytest.MonkeyPatch
         at.button[0].click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert len(at.dataframe) >= 1
-
-
-def test_public_example_is_pseudonymised() -> None:
-    """Only the single negative control may carry a real company code / name."""
-    import duckdb
-
-    for lead in EXAMPLES.glob("*/lead.parquet"):
-        con = duckdb.connect()
-        real = con.execute(
-            f"SELECT count(*), count(*) FILTER (WHERE tier IN ('A_priority', 'B_watchlist')) "
-            f"FROM '{lead}' WHERE ja_kodas < 900000000 OR legal_name NOT LIKE 'Entity x%'"
-        ).fetchone()
-        assert real == (1, 0), f"{lead}: real identities beyond the negative control: {real}"
-        links = lead.with_name("place_entity_link.parquet")
-        leaked = con.execute(
-            f"SELECT count(*) FROM '{links}' WHERE stage = 'override' AND reason <> 'analyst override'"
-        ).fetchone()
-        assert leaked == (0,)

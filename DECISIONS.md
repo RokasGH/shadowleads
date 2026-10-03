@@ -35,7 +35,8 @@ shows only the registrar, not the registrant), the Spinta copies of JAR/VMVT (fi
 ## 3. Proving the links: four validation layers
 V1 plausibility (active, Vilnius city, activity fits, not spread across unrelated places), V2
 agreement with independent evidence, **V3 a stratified manual audit** (48 links, 4 per category x
-method), V4 analyst overrides applied on every run (`labels/link_overrides.csv`). The audit drove
+method), V4 analyst overrides applied on every run (`labels/link_overrides.csv`); a second audit sample
+(`labels/match_audit_2.csv`) measures the rules after the fixes. The audit drove
 concrete fixes: same street in another city (Kaunas) matched -> address matches now Vilnius-only;
 unique exact names collided with unrelated companies -> corroboration required; franchise websites
 show the franchisor's code -> a code from a site shared by 3+ locations is `brand_site_code`.
@@ -73,10 +74,13 @@ prints legitimate explanations for its category (chair rental, family labour, gr
 Python 3.13, uv, DuckDB (single-file warehouse; layers `stg` -> `core` -> `mart`, plain SQL
 transforms), httpx/tenacity, pydantic-settings, structlog, cyclopts, Streamlit; ruff + pyrefly +
 pytest/Hypothesis in CI.
-- **Lineage:** every raw artefact is stored immutably with its sha256 in `meta.source_fetch`; leads
-  carry the fetch ids.
-- **Idempotent runs:** each stage is idempotent per run month; history is kept per month
-  (`mart.lead_history`).
+- **Lineage:** every raw artefact is stored immutably in `meta.source_fetch` (URL, time, size, rows
+  and a sha256 fingerprint, kept in the warehouse). Leads carry the ids of the files they were
+  computed from, and the app links each company to its records at Registrų centras, VMI, Sodra
+  and data.gov.lt. The fingerprint proves which exact version of a file a lead came from, because
+  the official files are overwritten in place.
+- **Idempotent runs:** each stage is idempotent. The output is a snapshot investigation (all data up
+  to the run date); month-over-month change tracking was dropped by decision.
 - **Data quality:** 18 DQ assertions; an `error` blocks the export.
 - **Cost:**
   - Google uses Nearby Search with Enterprise fields and a density-aware quadtree (distance
@@ -86,7 +90,7 @@ pytest/Hypothesis in CI.
 
 ## 7. Known limitations
 - **Google EEA terms** restrict caching Places content and using it for analytics or on non-Google
-  maps. This prototype keeps raw payloads locally and publishes only a pseudonymised example. A real
+  maps. This prototype keeps raw payloads locally and commits only the structured snapshot. A real
   deployment would need a licence or a legal basis.
 - **Coverage:** natural persons (individual activity, business certificates) cannot be linked, which
   is a large blind spot in the beauty category; hair/beauty linking recall is low because most
@@ -98,5 +102,9 @@ pytest/Hypothesis in CI.
 - **Lagging and partial declared data:** revenue comes from filed statements, and the FY2025 open
   export covers ~3% of companies. VMI does not document which taxpayers it publishes. Sodra hides
   wages and contributions at ≤3 insured.
-- **Pseudonymisation** protects the public example, not the local outputs. Reviewers can only see
-  full traceability on the negative control, or by running with their own key.
+- **Review timeframe:** Google reviews cannot be limited to the tax year with the official API, which
+  returns only a lifetime count and 5 sample reviews. Review dates are available only by scraping the
+  review list (SerpApi or Oxylabs), at about 1 request per 10–20 reviews. That is affordable for the
+  shortlist, not the whole city.
+- **Revenue:** FY2025 statements are filed (they appear on each company's Registrų centras documents
+  page), but the open-data export still holds FY2024 for most companies.

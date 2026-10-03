@@ -1,6 +1,6 @@
 # shadowleads: busy in public, quiet on paper
 
-A monthly pipeline that gives a VMI (State Tax Inspectorate) analyst a **prioritised, explainable
+A pipeline that gives a VMI (State Tax Inspectorate) analyst a **prioritised, explainable
 lead list** of Vilnius businesses that look busy on Google but declare little to the state. It
 covers three categories: **hairdressers & beauty salons**, **bars, pubs & night clubs**, and
 **car wash & repair**.
@@ -12,8 +12,8 @@ covers three categories: **hairdressers & beauty salons**, **bars, pubs & night 
 ```bash
 docker compose up        # http://localhost:8501
 ```
-This rebuilds the warehouse from the committed, pseudonymised example (`examples/2026-09`) and
-serves the analyst app. It needs no keys and makes no calls to data sources. A live monthly run is
+This rebuilds the warehouse from the committed example of a real run (`examples/2026-09`) and
+serves the analyst app. It needs no keys and makes no calls to data sources. A live run is
 opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, with keys in `.env`
 (see [.env.example](.env.example)).
 
@@ -63,7 +63,6 @@ flowchart LR
   LV --> EA[mart.entity_activity]
   EA --> S2[mart.lead<br/>peer scoring + tiers]
   S2 --> APP[Streamlit app + SQL console]
-  S2 --> H[mart.lead_history]
 ```
 
 ### Data sources
@@ -147,8 +146,9 @@ assertions run on every run, and an `error` blocks the export.
 **Analyst app** (`docker compose up` → http://localhost:8501):
 - **Leads:** filter by tier and category, download CSV. Each lead opens a plain-language
   explanation, its Google listings, the official records (VMI per year, Sodra per month, revenue),
-  the link evidence, the score components and the source lineage (URL, time, sha256).
-- **Coverage & map**, **Month-over-month**, **Data quality**.
+  the link evidence, the peer comparison, and deep links to the company's records at Registrų
+  centras, VMI, Sodra and data.gov.lt.
+- **Coverage & map** (hover a place for its company and tier) and **Data quality**.
 - **SQL console:** read-only SQL over the warehouse, with saved example questions:
   ```sql
   -- which categories have the highest share of flagged businesses?
@@ -159,7 +159,7 @@ assertions run on every run, and an `error` blocks the export.
   ```
   The DuckDB file (`data/warehouse.duckdb`) also opens in any SQL client.
 
-**Monthly operation:**
+**Running it:**
 - `shadowleads run --run-month 2026-10` runs the whole chain:
   1. ingest
   2. link
@@ -168,11 +168,13 @@ assertions run on every run, and an `error` blocks the export.
   5. score
   6. DQ checks
   7. export
-- Each stage is idempotent per run month and can be run on its own (`shadowleads --help`).
-- Months accumulate in the same warehouse. `mart.lead_history` shows new, persisting and resolved
-  leads and why each changed: re-linked, declared figures changed, or visible activity changed.
+- Each stage is idempotent and can be run on its own (`shadowleads --help`).
+- The result is a **snapshot investigation**: all data available up to the run date, scored once.
+  The `run_month` key would allow keeping several snapshots side by side later.
 - Every Google and Oxylabs response is cached, and a call ledger enforces monthly budgets
   (`SHADOWLEADS_GOOGLE_BUDGET`, default 900).
+- **SQL console:** saved queries live in `queries/saved_queries.json`, mounted from the host in
+  Docker so they survive restarts.
 
 **Local development:**
 ```bash
@@ -182,13 +184,9 @@ uv run shadowleads run          # needs GOOGLE_MAPS_API_KEY (+ OXYLABS_* optiona
 uv run streamlit run app/streamlit_app.py
 ```
 
-**Public example:** `examples/<month>/` is pseudonymised:
-- names, codes and place ids are replaced with keyed HMAC pseudonyms (fake codes start with 9);
-- review counts and money are bucketed, ratings rounded to 0.5, coordinates coarsened to ~1 km;
-- per-entity official time series are kept only for one negative control (a large business that
-  was not flagged).
-
-Real names appear only in local runs (`output/`, gitignored).
+**Committed example:** `examples/<month>/` holds the tables of a real run as Parquet, restricted
+to the companies in the lead list. Company names and codes are public register data and are kept
+as they are. Raw Google API payloads are not committed.
 
 ## Repository layout
 ```
@@ -198,7 +196,8 @@ src/shadowleads/
   sql/       core_*, mart_*, dq_checks.sql  (stg -> core -> mart)
   cli.py     stages + `run` / `auto` / `demo`
 app/         Streamlit analyst app
-examples/    pseudonymised real run (Parquet + leads.csv)
+examples/    real run (Parquet tables for the offline demo + leads.csv)
+queries/     saved SQL console queries
 labels/      analyst audit labels and link overrides (inputs)
 tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 ```
@@ -228,9 +227,8 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 - JAR and the VMI register: daily diffs.
 - Sodra and VMI taxes: monthly, after publication.
 - Financial statements: when filed.
-- Google: monthly snapshot for review velocity; place details more often for venues on the
-  watchlist.
-- Snapshot deltas (reviews/month) replace the lifetime-average estimate once 3+ months exist.
+- Google: re-sweep per investigation; place details more often for venues on the watchlist.
+- Review dates (see below) would replace the lifetime-average review estimate.
 
 **Monitoring & data quality**
 - The DQ suite (`meta.dq_result`) plus row-count and freshness SLOs per source.

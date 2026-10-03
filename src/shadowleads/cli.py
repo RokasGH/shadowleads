@@ -9,7 +9,7 @@ from typing import Annotated
 
 import cyclopts
 
-from shadowleads.db import session
+from shadowleads.db import fill_row_counts, session
 from shadowleads.http import PoliteClient
 from shadowleads.log import configure_logging, get_logger
 from shadowleads.settings import VILNIUS_BBOX, current_run_month, get_settings
@@ -41,6 +41,7 @@ def fetch_official(
     with session(s.db_path) as con, PoliteClient(s.user_agent, min_interval=1.5) as client:
         if only_revenue:
             official.fetch_revenue(con, client, s.raw_dir, month, since_fy=this_year - 3)
+            fill_row_counts(con)
             return
         official.fetch_jar(con, client, s.raw_dir, month)
         official.fetch_sodra(
@@ -50,6 +51,7 @@ def fetch_official(
         if not skip_register:
             official.fetch_vmi_register(con, client, s.raw_dir, month)
         official.fetch_revenue(con, client, s.raw_dir, month, since_fy=this_year - 3)
+        fill_row_counts(con)
 
 
 @app.command
@@ -256,16 +258,16 @@ def validate(run_month: RunMonth | None = None) -> None:
 
     s = get_settings()
     month = run_month or current_run_month()
-    labels = Path("labels/match_audit.csv")
+    labels = sorted(Path("labels").glob("match_audit*.csv"))
     with session(s.db_path) as con:
-        if labels.exists():
+        if labels:
             con.execute(
                 "CREATE OR REPLACE TABLE core.link_audit_label AS "
                 "SELECT place_id, CAST(ja_kodas AS BIGINT) AS ja_kodas, lower(trim(verdict)) AS verdict, "
                 "auditor, TRY_CAST(audited_on AS DATE) AS audited_on, note "
                 "FROM read_csv(?, header=true, all_varchar=true) "
                 "WHERE lower(trim(verdict)) IN ('correct', 'wrong')",
-                [str(labels)],
+                [[str(p) for p in labels]],
             )
         overrides = Path("labels/link_overrides.csv")
         if overrides.exists():
@@ -290,16 +292,30 @@ def validate(run_month: RunMonth | None = None) -> None:
             )
         run_sql_file(con, "core_link_validation.sql", run_month=month)
         run_sql_file(con, "mart_entity_activity.sql", run_month=month)
+        fill_row_counts(con)
 
 
 @app.command
-def audit_sample(run_month: RunMonth | None = None, *, per_stratum: int = 4) -> None:
-    """Write a stratified random sample of links (category x method family) to
-    labels/match_audit.csv for manual verification (V3). Fill `verdict` with correct|wrong."""
+def audit_sample(
+    run_month: RunMonth | None = None,
+    *,
+    out: Path = Path("labels/match_audit.csv"),
+    per_stratum: int = 3,
+) -> None:
+    """Stratified random sample of links (category x method family) for manual verification.
+
+    Links already present in any labels/match_audit*.csv are excluded, so successive samples
+    measure the current rules. Fill `verdict` with correct|wrong (+ note with the right company).
+    """
     s = get_settings()
     month = run_month or current_run_month()
-    out = Path("labels/match_audit.csv")
     out.parent.mkdir(exist_ok=True)
+    done = [str(p) for p in sorted(Path("labels").glob("match_audit*.csv")) if p != out]
+    seen = (
+        f"SELECT place_id FROM read_csv({done!r}, header=true, all_varchar=true)"
+        if done
+        else "SELECT NULL::VARCHAR AS place_id WHERE false"
+    )
     with session(s.db_path, read_only=True) as con:
         con.execute(
             f"""
@@ -307,24 +323,28 @@ def audit_sample(run_month: RunMonth | None = None, *, per_stratum: int = 4) -> 
                 WITH l AS (
                     SELECT v.*, p.name AS place_name, p.formatted_address AS place_address,
                            p.maps_uri, p.website, e.legal_name, e.registered_address,
-                           CASE WHEN v.method LIKE 'fallback%' THEN 'fallback'
+                           CASE WHEN v.method LIKE '%trademark%' OR v.method LIKE '%job_ads%' THEN 'fallback_brand'
+                                WHEN v.method LIKE 'fallback%website%' THEN 'fallback_website'
+                                WHEN v.method LIKE 'fallback%vmvt%' THEN 'fallback_premises'
+                                WHEN v.method LIKE 'fallback%' THEN 'fallback_other'
                                 WHEN v.method LIKE 'exact%' THEN 'exact_name'
                                 WHEN v.method LIKE 'core%' OR v.method LIKE 'name_part%' THEN 'core_name'
                                 ELSE v.method END AS method_family
                     FROM core.link_validation v
                     JOIN core.place_snapshot p USING (run_month, place_id)
                     JOIN core.entity e USING (ja_kodas)
-                    WHERE v.run_month = '{month}'
+                    WHERE v.run_month = '{month}' AND v.stage <> 'override'
+                      AND v.place_id NOT IN ({seen})
                 ),
                 ranked AS (
                     SELECT *, row_number() OVER (
-                        PARTITION BY category, method_family ORDER BY hash(place_id || '{month}')) AS rn
+                        PARTITION BY category, method_family ORDER BY hash(place_id || '{month}-2')) AS rn
                     FROM l
                 )
                 SELECT place_id, ja_kodas, '' AS verdict, '' AS auditor, '' AS audited_on, '' AS note,
-                       category, method_family, method, validation_status, place_name, place_address,
-                       maps_uri, website, legal_name, registered_address,
-                       'https://rekvizitai.vz.lt/paieska/?name=' || ja_kodas AS lookup_hint
+                       category, method_family, method, validation_status, usable, place_name,
+                       place_address, maps_uri, website, legal_name, registered_address,
+                       'https://www.registrucentras.lt/jar/p/dok.php?kod=' || ja_kodas AS registry_page
                 FROM ranked WHERE rn <= {per_stratum}
                 ORDER BY category, method_family
             ) TO '{out}' (HEADER, DELIMITER ',')
@@ -373,7 +393,7 @@ def dq(run_month: RunMonth | None = None) -> None:
         run_sql_file(con, "dq_checks.sql", run_month=month)
         failed = con.execute(
             "SELECT check_name, severity, observed, expected FROM meta.dq_result "
-            "WHERE run_month = ? AND NOT passed ORDER BY severity",
+            "WHERE run_month = ? AND NOT coalesce(passed, false) ORDER BY severity",
             [month],
         ).fetchall()
     for name, severity, observed, expected in failed:
@@ -407,19 +427,18 @@ def export(run_month: RunMonth | None = None) -> None:
 
 @app.command
 def export_example(run_month: RunMonth | None = None, *, out: Path = Path("examples")) -> None:
-    """Pseudonymised public example (committed to git) - see shadowleads.export."""
+    """Committed example of a real run (Parquet tables the app needs) - see shadowleads.export."""
     from shadowleads.export import export_example as _export
 
     s = get_settings()
     month = run_month or current_run_month()
-    key = s.pseudonym_key.get_secret_value().encode()
-    with session(s.db_path) as con:
-        _export(con, month, out / month, key)
+    with session(s.db_path, read_only=True) as con:
+        _export(con, month, out / month)
 
 
 @app.command
 def demo(*, examples: Path = Path("examples")) -> None:
-    """Offline demo: rebuild the warehouse from the committed pseudonymised example."""
+    """Offline demo: rebuild the warehouse from the committed example of a real run."""
     from shadowleads.db import run_sql_file
     from shadowleads.export import load_example
 
@@ -467,7 +486,7 @@ def auto() -> None:
             raise SystemExit("SHADOWLEADS_MODE=live needs GOOGLE_MAPS_API_KEY")
         run(month)
     else:
-        log.info("auto.demo_mode", action="serving the committed pseudonymised example")
+        log.info("auto.demo_mode", action="serving the committed example of a real run")
         demo()
 
 
