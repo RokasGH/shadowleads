@@ -2,3 +2,10 @@ place_id,ja_kodas,action,reason,analyst,decided_on
 ChIJ6ayVPf-T3UYRZmDg4_7VFe4,123833116,set,"audit: Real UAB for all ""7 Fridays"" is single company ""Pikantiškas maistas, UAB"", company code 123833116, VAT code LT238331113",Rokas,2026-10-03
 ChIJM--F7D-U3UYR6rz7SKY1Shc,124996835,set,"audit: ""Betora, UAB"" - code 124996835, VAT code LT249968314",Rokas,2026-10-03
 ChIJac74XQCR3UYR5xcndqVn4IU,123833116,set,"audit: Real UAB for all ""7 Fridays"" is single company ""Pikantiškas maistas, UAB"", company code 123833116, VAT code LT238331113",Rokas,2026-10-03
+ChIJeUts8_KX3UYRY1ZRSC5Nga4,308023790,set,"audit 2: company named at the bottom of the business website (UAB Meistrų centras)",Rokas,2026-10-03
+ChIJm8riOxWR3UYRKSqPiqZQEDI,303141863,set,"audit 2: privacy policy on ozopadangos.lt names UAB Padangų parkas",Rokas,2026-10-03
+ChIJaTrknxOX3UYRn7QUftC31hg,307062032,set,"audit 2: website names GK Meilė Sau, MB as the operator",Rokas,2026-10-03
+ChIJh-lY1R6V3UYRu1kaeR0w0mQ,305808597,set,"audit 2: website privacy policy names MB Du Vilkai; MB Šilaika runs the e-shop",Rokas,2026-10-03
+ChIJHf5AUgCR3UYR5pXZzzK1-_w,300805444,reject,"audit 2: erroneous Google Maps entry (not a real business)",Rokas,2026-10-03
+ChIJKRU1EQCV3UYRcBo48hJN9UI,302422633,reject,"audit 2: erroneous Google Maps entry (not a real business)",Rokas,2026-10-03
+ChIJ233gOfuU3UYRqiyt-BUxHjw,110796493,reject,"audit 2: brewery is the brand owner, not the bar operator (scale implausible)",Rokas,2026-10-03

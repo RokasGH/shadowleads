@@ -72,8 +72,20 @@ def _load_evidence(
         ).fetchall()
     }
     if "website_code" in tables:
+        # Audit 2: a site can carry several companies' codes (shop vs salon operator). Codes on the
+        # privacy-policy / terms page name the data controller - when present, only they count.
         for pid, kind, code in con.execute(
-            "SELECT place_id, code_type, code FROM stg.website_code WHERE run_month = ? AND code IS NOT NULL",
+            """
+            WITH c AS (
+                SELECT place_id, code_type, code,
+                       regexp_matches(lower(page_url), 'privat|privacy|taisykl|terms|salyg|sąlyg|duomen')
+                           AS policy_page
+                FROM stg.website_code WHERE run_month = ? AND code IS NOT NULL
+            )
+            SELECT place_id, code_type, code FROM c
+            WHERE policy_page OR NOT EXISTS (
+                SELECT 1 FROM c c2 WHERE c2.place_id = c.place_id AND c2.policy_page)
+            """,
             [run_month],
         ).fetchall():
             ev[pid]["website"].add(("c:" if kind == "company" else "v:") + code)

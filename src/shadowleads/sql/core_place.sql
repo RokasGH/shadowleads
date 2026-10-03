@@ -21,6 +21,10 @@ FROM (
             WHEN category IS NULL THEN 'primary type outside categories'
             WHEN coalesce(locality, '') <> 'Vilnius' THEN 'outside Vilnius city'
             WHEN business_status IS DISTINCT FROM 'OPERATIONAL' THEN 'not operational: ' || coalesce(business_status, 'unknown')
+            -- audit 2: listings named only by an address ("upės g 5 vilnius") are erroneous entries
+            WHEN regexp_matches(lower(name),
+                 '^([[:alpha:]]\. ?)*[[:alpha:]ąčęėįšųūž]+ (g|gatvė|pr|prospektas|al|alėja|pl|plentas)\.? ?[0-9]+[a-z]?(,? ?vilnius)?\s*$')
+                 THEN 'listing name is only an address (likely an erroneous Google entry)'
         END AS reason
     FROM stg.google_place
     WHERE run_month = '{run_month}'

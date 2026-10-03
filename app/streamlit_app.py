@@ -459,11 +459,21 @@ def lead_detail(month: str, ja: int) -> None:
                 if not ev.empty:
                     st.markdown(f"**{title}**")
                     show(ev, column_config={"page_url": st.column_config.LinkColumn("Page")})
-        st.caption(
-            "Methods: exact/core name = VMI branch trade name or JAR legal name; address = "
-            "registered address in the same building; fallback = independent evidence (website "
-            "code, VMVT premises, search snippets, trademark owner, job-ad employer)."
-        )
+        with st.expander("How links are validated (levels of fallback)"):
+            st.markdown(
+                "0. **Name / address rules**: exact or core name vs JAR legal name or VMI branch "
+                "trade name, corroborated by activity code or the same building.\n"
+                "1. **Independent evidence**: company/VAT code on the business's own website "
+                "(privacy-policy and terms pages win), VMVT food premises, directory URL, search "
+                "snippets naming the business.\n"
+                "2. **Brand-level evidence** (never enough alone): trademark owner, job-ad employer.\n"
+                "3. **Plausibility**: active, registered in Vilnius, activity fits, no franchisor "
+                "site, not an erroneous Google listing.\n"
+                "4. **Manual checks** (audit): website footer, privacy policy / terms, phone number "
+                "via a company directory, only business of its kind at the address, listing "
+                "sanity, scale and age plausibility, franchise check.\n"
+                "5. **Analyst override**: the verified decision is recorded and applied every run."
+            )
     with tab_src:
         sodra_code = scalar(
             "SELECT any_value(sodra_code) FROM stg.sodra_monthly WHERE ja_kodas = ?", [ja]

@@ -21,15 +21,17 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 
 | | Hair & beauty | Bars & clubs | Car wash & repair |
 |---|---|---|---|
-| Google places in scope | 1,668 | 361 | 1,348 |
-| Linked to a legal entity | 17% | 50% | 42% |
-| ... share of all Google reviews covered | 41% | 69% | 68% |
-| Priority A / watchlist leads | 8 / 13 | 0 / 7 | 2 / 12 |
+| Google places in scope | 1,665 | 361 | 1,347 |
+| Linked to a legal entity | 17% | 49% | 42% |
+| ... share of all Google reviews covered | 41% | 68% | 68% |
+| Priority A / watchlist leads | 8 / 12 | 0 / 7 | 2 / 11 |
 
-- 4,017 places swept, 1,033 linked, of which 776 links are trusted enough to feed Priority A.
-- Manual audit of 48 stratified links: 75% were correct before the audit-driven fixes. Of the 12 wrong
-  links, 3 are no longer produced by the rules, 3 are corrected by analyst overrides, and 5 of the
-  other 6 were already kept out of Priority A by the trust rules.
+- 4,017 places swept, 1,031 linked, of which 803 links are trusted enough to feed Priority A.
+- Two manual audits of stratified links:
+  - **Audit 1:** 48 links, 75% correct. Its findings led to rule fixes.
+  - **Audit 2:** 54 new links after the fixes, 84% correct, and 85% among links trusted for
+    Priority A. Exact-name, website-code and VMVT links were 100% correct; address-only links 67%.
+  - Wrong links named in the notes are corrected through analyst overrides.
 - Independent evidence agrees with name-based links in 93% of the cases where both exist; for
   address-only links the figure is 64%, so those never feed Priority A unless confirmed.
 - External calls: 1,115 Google calls (within the free tier in each month), 749 Oxylabs results
@@ -100,11 +102,12 @@ visitor volume, and it has no official API).
 Every candidate, its evidence and the decision are stored (`core.match_candidate`,
 `core.place_entity_link`), versioned per month.
 
-**Validation** (`core.link_validation`):
-- **V1:** plausibility checks.
-- **V2:** agreement with independent evidence.
-- **V3:** manual audit labels (`labels/match_audit.csv`, created by `shadowleads audit-sample`).
-- **V4:** analyst overrides (`labels/link_overrides.csv`), re-applied every month.
+**Validation** (`core.link_validation`) works in levels: name and address rules, then independent
+evidence, brand-level evidence, plausibility checks, manual verification and analyst overrides. The
+manual methods are those used in the audits: website footer, privacy policy, phone match, only
+business at the address, listing sanity, scale and age plausibility, and franchise check. See
+[labels/README.md](labels/README.md) for the levels and how to audit, and `shadowleads audit-sample`
+to draw a new sample.
 
 Trademark and job-ad evidence identify the company behind a *brand*. For franchises (Švaros broliai)
 and groups that run one company per venue (Grill London), that is not the operator, so these sources

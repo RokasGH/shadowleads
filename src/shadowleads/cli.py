@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import os
 from datetime import date
 from pathlib import Path
@@ -356,13 +357,22 @@ def validate(run_month: RunMonth | None = None) -> None:
             )
         overrides = Path("labels/link_overrides.csv")
         if overrides.exists():
-            # analyst decisions win over every automatic rule, every month (V4 feedback loop)
+            # analyst decisions win over every automatic rule, every month (V4 feedback loop).
+            # Read with the csv module: analyst-edited files have free-text notes with quotes.
+            with overrides.open(encoding="utf-8", newline="") as f:
+                rows = [
+                    [r["place_id"], int(r["ja_kodas"]), r["action"].strip().lower(), r["reason"],
+                     r.get("analyst"), r.get("decided_on") or None]
+                    for r in csv.DictReader(f)
+                ]  # fmt: skip
+            con.execute(
+                "CREATE OR REPLACE TABLE core.link_override (place_id VARCHAR, ja_kodas BIGINT, "
+                "action VARCHAR, reason VARCHAR, analyst VARCHAR, decided_on DATE)"
+            )
+            if rows:
+                con.executemany("INSERT INTO core.link_override VALUES (?, ?, ?, ?, ?, ?)", rows)
             con.execute(
                 f"""
-                CREATE OR REPLACE TABLE core.link_override AS
-                SELECT place_id, CAST(ja_kodas AS BIGINT) AS ja_kodas, lower(action) AS action,
-                       reason, analyst, TRY_CAST(decided_on AS DATE) AS decided_on
-                FROM read_csv('{overrides}', header=true, all_varchar=true);
                 UPDATE core.place_entity_link l
                 SET status = 'linked', ja_kodas = o.ja_kodas, method = 'analyst_override',
                     confidence = 'HIGH', stage = 'override', reason = o.reason

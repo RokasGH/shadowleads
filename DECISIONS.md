@@ -32,14 +32,40 @@ Fuzzy similarity never creates a link; it is recorded as evidence only.
 *Rejected:* scraping rekvizitai.lt and LIS licence pages (both forbid copying), .lt WHOIS (DOMREG
 shows only the registrar, not the registrant), the Spinta copies of JAR/VMVT (fields are null).
 
-## 3. Proving the links: four validation layers
-V1 plausibility (active, Vilnius city, activity fits, not spread across unrelated places), V2
-agreement with independent evidence, **V3 a stratified manual audit** (48 links, 4 per category x
-method), V4 analyst overrides applied on every run (`labels/link_overrides.csv`); a second audit sample
-(`labels/match_audit_2.csv`) measures the rules after the fixes. The audit drove
-concrete fixes: same street in another city (Kaunas) matched -> address matches now Vilnius-only;
-unique exact names collided with unrelated companies -> corroboration required; franchise websites
-show the franchisor's code -> a code from a site shared by 3+ locations is `brand_site_code`.
+## 3. Proving the links: validation levels and two audits
+Links are checked in levels; each is used when the previous ones cannot decide. The full list, with
+examples, is in [labels/README.md](labels/README.md).
+- **Level 0:** name and address rules.
+- **Level 1:** independent evidence. The company code on the business's own website (privacy-policy
+  and terms pages win), VMVT premises, directory URLs, and search snippets that name the business.
+- **Level 2:** brand-level evidence (trademark owner, job-ad employer). Never sufficient alone.
+- **Level 3:** plausibility. Active company, registered in Vilnius city, fitting activity code; no
+  franchisor website; the listing is not an erroneous entry.
+- **Level 4:** manual methods taken from the audit notes. Website footer, privacy policy or terms of
+  service, phone number via a company directory, only business of its kind at the address, Google
+  listing sanity, scale plausibility (a brewery is not a bar operator), age plausibility, franchise
+  check.
+- **Level 5:** analyst overrides (`labels/link_overrides.csv`), applied on every run.
+
+**Audit 1** covered 48 links and found 75% correct. It drove these fixes:
+- Address matches only for companies registered in Vilnius city (Kaunas matches had slipped through).
+- Corroboration required for unique exact names.
+- A website shared by 3 or more locations is treated as a franchisor or brand site.
+
+**Audit 2** covered 54 new links, measured after those fixes: 84% correct (43 of 51 decided), and
+85% among links trusted for Priority A.
+
+| Method | Precision in audit 2 |
+|---|---|
+| Exact name, website code, VMVT premises | 100% |
+| Search snippet | 83% |
+| Core name, brand-level evidence | 75% |
+| Address only | 67% |
+
+Two level 4 methods are now automated:
+- privacy-policy and terms pages outrank other codes on a website;
+- listings named only by an address are dropped.
+
 Only links that are confirmed, or strong and plausible, are `usable` for Priority A.
 
 ## 4. Metric: "declares far less than peers that look equally busy"
