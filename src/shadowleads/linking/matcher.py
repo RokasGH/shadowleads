@@ -28,6 +28,7 @@ from rapidfuzz import fuzz
 from shadowleads.categories import evrk_matches
 from shadowleads.linking.normalize import (
     exact_key,
+    is_vilnius_city,
     name_key,
     name_variants,
     parse_lt_address,
@@ -92,7 +93,9 @@ class EntityIndex:
             "FROM core.entity WHERE is_active"
         ).fetchall()
         for ja, legal_name, address, evrk_codes, nexus in rows:
-            addr = parse_lt_address(address)
+            # Google places are all in Vilnius city: a registered address only counts as the same
+            # premises when it is in Vilnius city too (audit: "Čiurlionio g. 4" matched Kaunas).
+            addr = parse_lt_address(address) if is_vilnius_city(address) else None
             ref = EntityRef(
                 ja, legal_name, addr.key if addr else None, tuple(evrk_codes or ()), nexus
             )
@@ -200,10 +203,16 @@ def decide(
         grouped = _by_entity(exact)
         if len(grouped) == 1:
             ((ja, cands),) = grouped.items()
-            strong = any(c.address_agrees or c.evrk_consistent for c in cands)
+            # audit: unique exact names still collide with unrelated companies ("Meistras ir
+            # Margarita" = construction firm) - a name alone is not enough
+            if any(c.address_agrees or c.evrk_consistent for c in cands):
+                return LinkDecision(
+                    place_id, "linked", ja, "exact_name", "HIGH",
+                    "unique exact full-name match, corroborated", exact,
+                )  # fmt: skip
             return LinkDecision(
-                place_id, "linked", ja, "exact_name", "HIGH" if strong else "MEDIUM",
-                "unique exact full-name match", exact,
+                place_id, "ambiguous", reason="exact name, activity and address do not fit",
+                candidates=exact,
             )  # fmt: skip
         ja, how = _narrow(grouped, need_distinctive=False, distinctive=True)
         if ja is not None:
@@ -282,7 +291,8 @@ def run_primary_linking(con: duckdb.DuckDBPyConnection, run_month: str) -> dict[
     keys = [(a.key if (a := parse_street(st, no)) else None) for *_, st, no in places]
     per_address = Counter(k for k in keys if k)
     decisions = [
-        decide(index, *row, per_address[k] if k else 0) for row, k in zip(places, keys, strict=True)
+        decide(index, pid, name, cat, st, no, per_address[k] if k else 0)
+        for (pid, name, cat, st, no), k in zip(places, keys, strict=True)
     ]
     write_decisions(con, run_month, decisions, stage="primary")
     stats: Counter[str] = Counter(f"{d.status}:{d.method or d.reason}" for d in decisions)

@@ -3,12 +3,13 @@ how, and how trustworthy those links are. Written to output/<month>/coverage.md.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import duckdb
 
 
-def _table(con: duckdb.DuckDBPyConnection, sql: str, params: list[object] | None = None) -> str:
+def _table(con: duckdb.DuckDBPyConnection, sql: str, params: Sequence[object] | None = None) -> str:
     rel = con.execute(sql, params or [])
     cols = [d[0] for d in rel.description]
     rows = rel.fetchall()

@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Lint & format
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check
+        run: uv run pyrefly check
+      - name: Tests (incl. app smoke test on the committed example)
+        run: uv run pytest -q
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image and build the offline demo warehouse
+        run: |
+          docker compose build
+          docker compose run --rm pipeline auto

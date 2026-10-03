@@ -84,6 +84,13 @@ def _load_evidence(
             [run_month],
         ).fetchall():
             ev[pid]["serp"].add("c:" + code)
+    if "brand_evidence" in tables:
+        for pid, source, ja in con.execute(
+            "SELECT place_id, source, ja_kodas FROM stg.brand_evidence "
+            "WHERE run_month = ? AND ja_kodas IS NOT NULL",
+            [run_month],
+        ).fetchall():
+            ev[pid][source].add(f"c:{ja}")
     return ev
 
 

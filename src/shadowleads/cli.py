@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -195,6 +196,50 @@ def fetch_serp(
 
 
 @app.command
+def fetch_trademarks(run_month: RunMonth | None = None, *, limit: int = 800) -> None:
+    """Trademark owners (LINTA) for visibly busy places - brand-level evidence."""
+    from shadowleads.linking.brand_evidence import busy_targets, collect_trademarks
+    from shadowleads.sources.trademarks import TrademarkClient
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path) as con, PoliteClient(s.user_agent, min_interval=1.5) as client:
+        targets = busy_targets(con, month, quantile=0.75, only_unresolved=False, limit=limit)
+        n = collect_trademarks(con, TrademarkClient(client, s.raw_dir / "linta"), month, targets)
+    log.info("trademarks.done", targets=len(targets), owners=n)
+
+
+@app.command
+def fetch_job_ads(
+    run_month: RunMonth | None = None, *, limit: int = 150, budget: int = 500
+) -> None:
+    """Employers named in job ads for busy unresolved brands (Oxylabs Google search)."""
+    from shadowleads.linking.brand_evidence import brand_of, busy_targets, store_job_ads
+    from shadowleads.sources.oxylabs import SerpClient, job_ad_query, run_serp_lookups
+
+    s = get_settings()
+    if not s.has_oxylabs or s.oxylabs_password is None or s.oxylabs_username is None:
+        raise SystemExit("OXYLABS_USERNAME / OXYLABS_PASSWORD are not set")
+    month = run_month or current_run_month()
+    with session(s.db_path) as con:
+        targets = busy_targets(con, month, quantile=0.5, only_unresolved=True, limit=limit)
+        brands = {pid: brand_of(name) for pid, _, name, *_ in targets}
+        client = SerpClient(
+            con, username=s.oxylabs_username, password=s.oxylabs_password.get_secret_value(),
+            api_url=s.oxylabs_api_url, geo_location=s.oxylabs_geo_location,
+            cache_dir=s.raw_dir / "serp" / month, run_month=month, budget=budget,
+        )  # fmt: skip
+        fetched = run_serp_lookups(
+            client,
+            [(pid, "job_ads", brands[pid], None, None) for pid in brands],
+            query_fn=lambda brand, *_: job_ad_query(brand),
+            fetch_only=True,
+        )
+        n = store_job_ads(con, month, fetched, brands)
+        log.info("job_ads.done", targets=len(targets), employers=n, calls=client.calls_this_run())
+
+
+@app.command
 def link_fallback(run_month: RunMonth | None = None) -> None:
     """Resolve ambiguous/unmatched places with independent code evidence; cross-check links."""
     from shadowleads.linking.fallback import run_fallback
@@ -221,6 +266,27 @@ def validate(run_month: RunMonth | None = None) -> None:
                 "FROM read_csv(?, header=true, all_varchar=true) "
                 "WHERE lower(trim(verdict)) IN ('correct', 'wrong')",
                 [str(labels)],
+            )
+        overrides = Path("labels/link_overrides.csv")
+        if overrides.exists():
+            # analyst decisions win over every automatic rule, every month (V4 feedback loop)
+            con.execute(
+                f"""
+                CREATE OR REPLACE TABLE core.link_override AS
+                SELECT place_id, CAST(ja_kodas AS BIGINT) AS ja_kodas, lower(action) AS action,
+                       reason, analyst, TRY_CAST(decided_on AS DATE) AS decided_on
+                FROM read_csv('{overrides}', header=true, all_varchar=true);
+                UPDATE core.place_entity_link l
+                SET status = 'linked', ja_kodas = o.ja_kodas, method = 'analyst_override',
+                    confidence = 'HIGH', stage = 'override', reason = o.reason
+                FROM core.link_override o
+                WHERE l.run_month = '{month}' AND l.place_id = o.place_id AND o.action = 'set';
+                UPDATE core.place_entity_link l
+                SET status = 'ambiguous', ja_kodas = NULL, method = NULL, confidence = NULL,
+                    stage = 'override', reason = 'rejected by analyst: ' || o.reason
+                FROM core.link_override o
+                WHERE l.run_month = '{month}' AND l.place_id = o.place_id AND o.action = 'reject';
+                """
             )
         run_sql_file(con, "core_link_validation.sql", run_month=month)
         run_sql_file(con, "mart_entity_activity.sql", run_month=month)
@@ -286,7 +352,7 @@ def score(run_month: RunMonth | None = None) -> None:
 
 @app.command
 def report(run_month: RunMonth | None = None) -> None:
-    """Write output/<month>/coverage.md (Milestone-1 checkpoint)."""
+    """Write output/MONTH/coverage.md (Milestone-1 checkpoint)."""
     from shadowleads.report import coverage_report
 
     s = get_settings()
@@ -294,6 +360,112 @@ def report(run_month: RunMonth | None = None) -> None:
     with session(s.db_path, read_only=True) as con:
         path = coverage_report(con, month, s.output_dir / month)
     log.info("report.written", path=str(path))
+
+
+@app.command
+def dq(run_month: RunMonth | None = None) -> None:
+    """Run data-quality assertions; exits non-zero when an `error` check fails."""
+    from shadowleads.db import run_sql_file
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path) as con:
+        run_sql_file(con, "dq_checks.sql", run_month=month)
+        failed = con.execute(
+            "SELECT check_name, severity, observed, expected FROM meta.dq_result "
+            "WHERE run_month = ? AND NOT passed ORDER BY severity",
+            [month],
+        ).fetchall()
+    for name, severity, observed, expected in failed:
+        log.warning(
+            "dq.failed", check=name, severity=severity, observed=observed, expected=expected
+        )
+    if any(sev == "error" for _, sev, _, _ in failed):
+        raise SystemExit("data-quality errors - lead export blocked")
+    log.info("dq.done", failed_warnings=len(failed))
+
+
+@app.command
+def export(run_month: RunMonth | None = None) -> None:
+    """Local analyst export with real names (output/MONTH/leads.csv + coverage.md)."""
+    from shadowleads.export import export_run
+    from shadowleads.report import coverage_report
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    with session(s.db_path, read_only=True) as con:
+        errors = con.execute(
+            "SELECT count(*) FROM meta.dq_result WHERE run_month = ? AND severity = 'error' AND NOT passed",
+            [month],
+        ).fetchone()
+        if errors and errors[0]:
+            raise SystemExit("data-quality errors - lead export blocked (see `shadowleads dq`)")
+        path = export_run(con, month, s.output_dir / month)
+        coverage_report(con, month, s.output_dir / month)
+    log.info("export.done", path=str(path))
+
+
+@app.command
+def export_example(run_month: RunMonth | None = None, *, out: Path = Path("examples")) -> None:
+    """Pseudonymised public example (committed to git) - see shadowleads.export."""
+    from shadowleads.export import export_example as _export
+
+    s = get_settings()
+    month = run_month or current_run_month()
+    key = s.pseudonym_key.get_secret_value().encode()
+    with session(s.db_path) as con:
+        _export(con, month, out / month, key)
+
+
+@app.command
+def demo(*, examples: Path = Path("examples")) -> None:
+    """Offline demo: rebuild the warehouse from the committed pseudonymised example."""
+    from shadowleads.db import run_sql_file
+    from shadowleads.export import load_example
+
+    s = get_settings()
+    s.db_path.unlink(missing_ok=True)
+    with session(s.db_path) as con:
+        load_example(con, examples)
+        run_sql_file(con, "mart_views.sql")
+    log.info("demo.ready", db=str(s.db_path))
+
+
+@app.command
+def run(run_month: RunMonth | None = None, *, skip_official: bool = False) -> None:
+    """Full monthly run: ingest -> link -> fallbacks -> validate -> score -> DQ -> export."""
+    s = get_settings()
+    month = run_month or current_run_month()
+    log.info("run.start", run_month=month, google=s.has_google, oxylabs=s.has_oxylabs)
+    if not skip_official:
+        fetch_official(month)
+    fetch_google(month)
+    link(month)
+    fetch_websites(month)
+    fetch_vmvt(month)
+    if s.has_oxylabs:
+        fetch_serp(month)
+    fetch_trademarks(month)
+    if s.has_oxylabs:
+        fetch_job_ads(month)
+    link_fallback(month)
+    validate(month)
+    score(month)
+    dq(month)
+    export(month)
+    log.info("run.done", run_month=month)
+
+
+@app.command
+def auto() -> None:
+    """Container entry point: live run when a Google key is configured, otherwise offline demo."""
+    s = get_settings()
+    month = os.environ.get("SHADOWLEADS_RUN_MONTH") or current_run_month()
+    if s.has_google:
+        run(month)
+    else:
+        log.info("auto.no_google_key", action="serving the committed pseudonymised example")
+        demo()
 
 
 @app.command

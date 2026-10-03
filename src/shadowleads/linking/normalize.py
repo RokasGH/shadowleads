@@ -182,6 +182,18 @@ def parse_lt_address(address: str | None) -> Address | None:
     return None
 
 
+def is_vilnius_city(address: str | None) -> bool:
+    """Registry address is in Vilnius city (not Vilnius district, not another town).
+
+    'Vilnius, Šaltkalvių g. 60A-245, LT-02175' -> True; 'Kaunas, M. K. Čiurlionio g. 4-7' ->
+    False; 'Vilniaus r. sav., ...' -> False; 'Vilniaus m. sav., Vilniaus m., ...' -> True.
+    """
+    if not address:
+        return False
+    first = fold(address.split(",")[0])
+    return first == "vilnius" or first.startswith("vilniaus m")
+
+
 def is_vilnius_address(address: str | None) -> bool:
     folded = fold(address)
     return "vilniaus m" in folded or folded.startswith("vilnius") or " vilnius" in f" {folded}"

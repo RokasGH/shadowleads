@@ -48,4 +48,5 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.pyrefly]
-project-includes = ["src", "tests"]
+project-includes = ["src", "tests", "app"]
+search-path = ["src", "app"]

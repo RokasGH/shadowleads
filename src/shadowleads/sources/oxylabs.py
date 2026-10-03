@@ -24,6 +24,7 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from shadowleads.linking.normalize import fold, name_key
+from shadowleads.linking.resolve import company_names_in
 from shadowleads.log import get_logger
 from shadowleads.sources.websites import extract_codes
 
@@ -145,9 +146,11 @@ def run_serp_lookups(
     client: SerpClient,
     targets: list[tuple[str, str, str, str | None, str | None]],
     workers: int = 8,
+    query_fn: Any = None,
+    fetch_only: bool = False,
 ) -> list[dict[str, Any]]:
     """targets: (place_id, purpose, name, street, number). Returns one row per (place, code)."""
-    queries = {t[0]: build_query(t[2], t[3], t[4]) for t in targets}
+    queries = {t[0]: (query_fn or build_query)(t[2], t[3], t[4]) for t in targets}
     results: dict[str, dict[str, Any]] = {}
     to_fetch = []
     for place_id, query in queries.items():
@@ -169,6 +172,8 @@ def run_serp_lookups(
             if i % 25 == 0:
                 log.info("oxylabs.progress", done=i, total=len(to_fetch))
 
+    if fetch_only:
+        return [{"place_id": pid, "payload": results[pid]} for pid in queries if pid in results]
     rows: list[dict[str, Any]] = []
     for place_id, purpose, name, *_ in targets:
         if place_id not in results:
@@ -182,3 +187,22 @@ def run_serp_lookups(
             for c, n in codes_from_serp(results[place_id]).items()
         ]
     return rows
+
+
+def job_ad_query(brand: str) -> str:
+    return f'"{brand}" Vilnius darbo skelbimas'
+
+
+def employers_from_serp(payload: dict[str, Any], brand: str) -> set[str]:
+    """Company names in job-ad results that also mention the brand ('UAB „Kauno loftas“ ...
+    restorane "Grill London"'). Employers of a brand, not necessarily of this exact venue."""
+    tokens = name_key(brand).split()
+    names: set[str] = set()
+    for result in payload.get("results", []):
+        content = result.get("content") or {}
+        organic = content.get("results", {}).get("organic", []) if isinstance(content, dict) else []
+        for item in organic:
+            text = f"{item.get('title', '')} . {item.get('desc', '')}"
+            if tokens and all(t in fold(text).split() for t in tokens):
+                names |= company_names_in(text)
+    return names
