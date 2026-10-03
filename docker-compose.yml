@@ -1,6 +1,7 @@
 # `docker compose up` - one command on a clean machine.
-#   * with GOOGLE_MAPS_API_KEY (and optionally OXYLABS_*) in .env: full live monthly run
-#   * without keys: offline demo built from the committed, pseudonymised example
+#   * default: offline demo built from the committed, pseudonymised example (no API calls)
+#   * SHADOWLEADS_MODE=live docker compose up: full live monthly run (needs GOOGLE_MAPS_API_KEY,
+#     optionally OXYLABS_*; spends API quota - budgets are enforced per warehouse)
 # then the analyst app is served on http://localhost:8501
 services:
   pipeline:
@@ -12,6 +13,7 @@ services:
       OXYLABS_USERNAME: ${OXYLABS_USERNAME:-}
       OXYLABS_PASSWORD: ${OXYLABS_PASSWORD:-}
       OXYLABS_GEO_LOCATION: ${OXYLABS_GEO_LOCATION:-Lithuania}
+      SHADOWLEADS_MODE: ${SHADOWLEADS_MODE:-demo}
       SHADOWLEADS_RUN_MONTH: ${SHADOWLEADS_RUN_MONTH:-}
       SHADOWLEADS_GOOGLE_BUDGET: ${SHADOWLEADS_GOOGLE_BUDGET:-900}
       SHADOWLEADS_PSEUDONYM_KEY: ${SHADOWLEADS_PSEUDONYM_KEY:-}

@@ -458,13 +458,16 @@ def run(run_month: RunMonth | None = None, *, skip_official: bool = False) -> No
 
 @app.command
 def auto() -> None:
-    """Container entry point: live run when a Google key is configured, otherwise offline demo."""
+    """Container entry point. Default: offline demo from the committed example. A live run (which
+    spends Google / Oxylabs quota) must be requested explicitly with SHADOWLEADS_MODE=live."""
     s = get_settings()
     month = os.environ.get("SHADOWLEADS_RUN_MONTH") or current_run_month()
-    if s.has_google:
+    if os.environ.get("SHADOWLEADS_MODE") == "live":
+        if not s.has_google:
+            raise SystemExit("SHADOWLEADS_MODE=live needs GOOGLE_MAPS_API_KEY")
         run(month)
     else:
-        log.info("auto.no_google_key", action="serving the committed pseudonymised example")
+        log.info("auto.demo_mode", action="serving the committed pseudonymised example")
         demo()
 
 

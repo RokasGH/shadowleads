@@ -12,10 +12,10 @@ covers three categories: **hairdressers & beauty salons**, **bars, pubs & night 
 ```bash
 docker compose up        # http://localhost:8501
 ```
-On a clean machine this rebuilds the warehouse from the committed, pseudonymised example
-(`examples/2026-09`) and serves the analyst app. No keys or network calls to data sources are
-needed. With keys in `.env` (see [.env.example](.env.example)) the same command runs the full live
-monthly pipeline instead.
+This rebuilds the warehouse from the committed, pseudonymised example (`examples/2026-09`) and
+serves the analyst app. It needs no keys and makes no calls to data sources. A live monthly run is
+opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, with keys in `.env`
+(see [.env.example](.env.example)).
 
 ## Results of the committed run (September 2026 snapshot)
 
