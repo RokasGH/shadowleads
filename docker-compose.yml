@@ -7,6 +7,7 @@ services:
   pipeline:
     build: .
     image: shadowleads:latest
+    pull_policy: build   # rebuild the image on every `docker compose up`, so code changes are never stale
     command: ["auto"]
     environment:
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}

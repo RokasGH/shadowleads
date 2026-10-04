@@ -41,11 +41,15 @@ examples, is in [labels/README.md](labels/README.md).
 - **Level 2:** brand-level evidence (trademark owner, job-ad employer). Never sufficient alone.
 - **Level 3:** plausibility. Active company, registered in Vilnius city, fitting activity code; no
   franchisor website; the listing is not an erroneous entry.
-- **Level 4:** manual methods taken from the audit notes. Website footer, privacy policy or terms of
-  service, phone number via a company directory, only business of its kind at the address, Google
-  listing sanity, scale plausibility (a brewery is not a bar operator), franchise check, and the
-  premises licence (hygiene passport) in the LIS register. Company age vs venue age was rejected as
-  unreliable.
+- **Level 4:** analyst verification, from the audit notes. Several checks also run automatically
+  at levels 1 and 3, and the analyst covers what automation could not decide:
+  - **Partly automated:** website footer, and privacy policy or terms of service.
+  - **Analyst only:** phone number via a company directory, and the premises licence (hygiene
+    passport) in the LIS register.
+  - **Analyst completes automated rules:** only business of its kind at the address, Google listing
+    sanity, scale plausibility (a brewery is not a bar operator), and franchise check.
+
+  Company age vs venue age was rejected as unreliable.
 - **Level 5:** analyst overrides (`labels/link_overrides.csv`), applied on every run.
 
 **Audit 1** covered 48 links and found 75% correct. It drove these fixes:
@@ -70,7 +74,8 @@ Two level 4 methods are now automated:
 Only links that are confirmed, or strong and plausible, are `usable` for Priority A.
 
 ## 4. Metric: "declares far less than peers that look equally busy"
-*Visible activity* = Google reviews per active year (no official API gives visitor counts; Popular
+*Visible activity* = the lifetime Google review count across the company's places divided by its
+years active (no official API gives visitor counts or reviews per period; Popular
 Times is relative to each venue's own peak and was dropped). *Busy* = at or above the category's
 75th percentile of **all** Google places in Vilnius (90th percentile when the rating is ≤3.5 or
 ≥4.8: extreme ratings attract disproportionate reviews, so they need more evidence instead of
@@ -137,6 +142,21 @@ pytest/Hypothesis in CI.
 - **Coverage:** natural persons (individual activity, business certificates) cannot be linked, which
   is a large blind spot in the beauty category; hair/beauty linking recall is low because most
   salons have only Facebook or Treatwell pages.
+- **Hairdressers and beauty salons:** many salon companies only control the premises; the
+  specialists are self-employed (individual activity or business certificates), rent a chair and pay
+  their taxes personally, so they do not appear in the company's taxes or Sodra headcount. A salon
+  can look like a lead while being compliant. VMI internally sees individual-activity declarations
+  and business certificates by activity, which is the data that would close this gap.
+- **Hard-to-match operators:** companies registered at a different address, running several venues
+  under unrelated brand names, or franchise locations run by a separate company. The registers have
+  no premises address for beauty or auto. JAR's management-body data (`JAR_VALDYMAS.csv`) could
+  link group companies through shared directors (not used yet); the beneficial-owners register is
+  not freely open.
+- **One website, several companies:** an e-shop company and a service company can share a site
+  (Synth), so a code on the site is not always the operator's.
+- **Schema drift is absorbed silently:** if a new Sodra file drops a column, the loader fills it
+  with empty values instead of failing. The DQ volume checks would not notice a missing
+  contributions column.
 - **Streetlight bias:** only linkable businesses are scored.
 - **Reviews ≠ visitors:** review propensity varies with clientele (tourists), bought reviews exist,
   and reviews may predate the current operator (PERONAS: operator in bankruptcy since 2026-09, bar

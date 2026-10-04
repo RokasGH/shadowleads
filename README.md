@@ -80,9 +80,15 @@ flowchart LR
 | Sodra (atvira.sodra.lt bulk ZIP) | insured persons, contributions, average wage, activity code | entity × month | monthly, ~1 month lag |
 | RC financial statements (data.gov.lt) | sales revenue, labelled with its fiscal year | entity × FY | lags (FY2024 mostly) |
 | VMVT food-business register | company code + trade name + **premises address** (bars) | premises | live |
-| Businesses' own websites | self-declared company / VAT code (robots.txt honoured) | place | live |
+| Businesses' own websites | self-declared company / VAT code (each site's `robots.txt` crawl rules are respected) | place | live |
 | Oxylabs Web Scraper API (Google Search) | company codes and job-ad employers quoted in search snippets | place | live |
 | State Patent Bureau (search.linta.lt) | trademark owner of the brand | brand | live |
+
+*Freshness* is how often the **publisher** updates the data (the JAR file is rebuilt daily, VMI
+taxes monthly). Each run simply takes the latest version available on the run date; no daily
+history is collected. `robots.txt` is a file each website publishes at its root
+(`https://example.lt/robots.txt`) telling automated crawlers which pages they may fetch; the website
+scanner reads it on every business site and skips disallowed pages.
 
 Rejected sources: rekvizitai.lt and LIS licence pages (terms forbid copying), .lt WHOIS (the
 registrant is hidden), Google Popular Times (relative to each venue's own peak, so it doesn't show
@@ -102,20 +108,33 @@ visitor volume, and it has no official API).
 Every candidate, its evidence and the decision are stored (`core.match_candidate`,
 `core.place_entity_link`), versioned per month.
 
-**Validation** (`core.link_validation`) works in levels: name and address rules, then independent
-evidence, brand-level evidence, plausibility checks, manual verification and analyst overrides. The
-manual methods are those used in the audits: website footer, privacy policy, phone match, only
-business at the address, listing sanity, scale plausibility, franchise check, and premises
-licence lookup. See
-[labels/README.md](labels/README.md) for the levels and how to audit, and `shadowleads audit-sample`
-to draw a new sample.
+**Validation** (`core.link_validation`) works in levels:
+1. name and address rules;
+2. independent evidence;
+3. brand-level evidence;
+4. plausibility checks;
+5. analyst verification;
+6. analyst overrides.
+
+Some checks run at two levels, done by different actors:
+- **Automated:** the website scanner reads the homepage plus up to 3 linked pages (contacts,
+  requisites, privacy policy) for a company or VAT code.
+- **Analyst:** when automation cannot decide (page not reached, no code shown, site rendered by
+  JavaScript), the analyst reads the footer or privacy policy, matches the phone number via a
+  company directory, and checks the premises licence.
+
+See [labels/README.md](labels/README.md) for the levels, which part is automated and which is done
+by the analyst. `shadowleads audit-sample` draws a new audit sample.
 
 Trademark and job-ad evidence identify the company behind a *brand*. For franchises (Švaros broliai)
 and groups that run one company per venue (Grill London), that is not the operator, so these sources
 never confirm a link on their own.
 
 ### Scoring: "declares far less than peers who look equally busy"
-- **Visible activity:** Google reviews per active year, summed over the company's Vilnius places.
+- **Visible activity:** the **lifetime** Google review count across the company's Vilnius places,
+  divided by its years active (from the later of its registration and 2015, between 1 and 10
+  years). It is an average, not a count of reviews in a given year: the Places API returns only the
+  lifetime total.
   A company is "busy" if it is at or above the category's 75th percentile of *all* Google places.
   Very low or very high ratings must reach the 90th percentile: they attract disproportionate
   reviews, so they need more evidence rather than adjusted counts.
@@ -214,45 +233,148 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 ## Towards production
 
 **Scalability (3 categories in Vilnius → every business in Lithuania)**
-- Bulk registers already cover the whole country, so only Google is bounded by area.
-- Tile Lithuania by municipality with the same density-aware quadtree: about 60 times Vilnius,
-  roughly 40–70k calls/month at full refresh.
-- Refresh incrementally instead: re-query only cells whose last result was saturated or changed,
-  and refresh known `place_id`s via Place Details on a rotating schedule.
-- Swap DuckDB for Postgres or a lakehouse (Iceberg + DuckDB/Trino) with an orchestrator (Dagster)
-  once several analysts and services need to write. The SQL models port as-is (dbt/SQLMesh).
+- The official registers already cover the whole country (the largest table is 3.35M Sodra rows; the
+  warehouse is ~200 MB), so a single machine is enough. Google coverage is the part that scales
+  with area: Vilnius for 3 categories took ~1,100 calls, and all of Lithuania for all categories is
+  plausibly 50–100× that.
+- **Incremental re-linking:** today every run re-matches all places from scratch, which is fine for
+  3,400 places. At national scale, carry last month's link forward and re-match only places whose
+  inputs changed. A place is re-linked when:
+  - it is new on Google;
+  - its Google name, address or website changed, or the listing closed or reopened;
+  - its linked company changed status (liquidation, bankruptcy, deregistration), so the venue may
+    have a new operator;
+  - new evidence appeared (a VMVT premises registration, a company or VAT code on its website, a
+    new VMI branch, a new trademark owner);
+  - an analyst override was added or changed;
+  - a matching rule changed (then everything is re-run once).
+- **Storage:** keep DuckDB as the compute engine, but write each monthly snapshot as Parquet /
+  Iceberg tables partitioned by `run_month` on object storage. That gives cheap long history, schema
+  evolution and time travel.
+- **Multiple writers:** analyst decisions move into Postgres, the OLTP side. DuckDB has one writer
+  at a time and no user accounts.
+- **Orchestration:** a monthly cron job on any Linux VM with Docker is enough to start; move to an
+  orchestrator (Dagster, Airflow, Prefect) when per-step retries, backfills and alerting are needed.
+- **Transformations:** the SQL models (`sql/core_*`, `sql/mart_*`) would move to dbt or SQLMesh for
+  dependency ordering, incremental builds, tests and lineage documentation. Extraction stays in
+  Python.
+- **Dimensional model:** the `core` layer would become a star schema:
+  - dimensions `dim_company` (with change history), `dim_place`, `dim_month`, `dim_category`;
+  - facts per grain: company × month (Sodra), company × year (taxes, revenue), place × month
+    (reviews, rating), and a place-company link bridge per month.
+
+  What it buys: one clear grain per table, consistent joins for every analyst query, BI tools work
+  out of the box, and history handled in one place instead of in each mart.
+- **Slowly changing dimensions (type 2):** company status, address, name, legal form and VAT
+  registration are kept with valid-from / valid-to dates. The JAR file only holds the current
+  state, so history is built by comparing monthly snapshots. This also shows operator changes
+  (PERONAS: operator in bankruptcy, bar still busy).
 
 **Accuracy (matching and scoring)**
-- Turn audit labels into a trained matcher (Fellegi-Sunter or gradient boosting over the stored
-  candidate features).
-- Add data VMI already holds but that isn't public: i.EKA cash-register receipts, i.SAF invoices,
-  employment contracts per premises, and the premises register of business-licence holders.
-  Linking then becomes exact and the visible-activity proxy can be calibrated against true turnover.
-- Calibrate visible activity per category with inspection outcomes (dispositions feed back as
-  labels).
-- Monitor review fraud: review bursts and rating distribution.
+- **A trained matcher is realistic.** A useful model needs a few hundred to a couple of thousand
+  labelled place → company pairs across methods, not hundreds of thousands; active learning (label
+  the pairs the model is least sure about) reduces it further. Training takes seconds on a laptop.
+  Plan:
+  1. Analysts link the ~1,200 Vilnius places that currently have no candidate, plus a sample of
+     existing links (a few weeks of work), recording the method as in the audits.
+  2. Train on the stored candidate features (name similarity, address agreement, activity fit,
+     evidence sources).
+  3. Measure precision per method on a held-out audit sample before letting the model link on its
+     own.
+
+  Given the tax at stake, a few analyst-weeks is a small cost. The labels also show which new
+  evidence sources are worth adding, because a model cannot link places that have no candidate.
+- **Supervised calibration, ongoing:** inspection outcomes (violation found / clean) become labels
+  that re-weight the score's dimensions and signals, and the review propensity per category, as the
+  dataset grows.
+- **Analyst decisions in the app, not CSV files:** today `labels/link_overrides.csv` holds analyst
+  decisions. In production the app would let an analyst:
+  - propose a link, a rejection or a lead disposition (inspected / clean / violation), with
+    evidence;
+  - have a second analyst approve it.
+
+  Decisions go to a Postgres table (who, when, evidence, status) and are applied on every run, as
+  the CSV is now. That is the "several writers" case DuckDB is not built for.
+- **More matching evidence:** JAR's management-body data (`JAR_VALDYMAS.csv`) could link companies
+  that share a director (group companies, franchise operators). The beneficial-owners register is not
+  freely open.
+- **Data VMI already holds:** i.EKA cash-register receipts, i.SAF invoices, employment contracts
+  per premises, business-licence premises, and individual-activity declarations and business
+  certificates by activity code. These are the primary sources for a production system: linking
+  becomes exact, visible activity can be calibrated against real turnover, and the
+  self-employed-hairdresser blind spot closes.
 
 **Freshness (sources change at different rates)**
-- JAR and the VMI register: daily diffs.
-- Sodra and VMI taxes: monthly, after publication.
-- Financial statements: when filed.
-- Google: re-sweep per investigation; place details more often for venues on the watchlist.
-- Review dates (see below) would replace the lifetime-average review estimate.
+- A monthly cadence for everything: registers and declarations change slowly, and daily updates
+  would add cost without changing a monthly lead list.
+- Financial statements are picked up when they appear in open data (FY2025 is filed but not yet
+  exported).
+- Google: see the review history and optimised retrieval below.
+- **Review history:** `core.place_snapshot` already keeps every place's review count and rating per
+  monthly snapshot. A `mart.place_review_history` view would add:
+  - new reviews per month per place and company (negative deltas from deleted reviews set to 0 and
+    flagged);
+  - the average rating of the *new* reviews only:
+    `(rating₂·n₂ − rating₁·n₁) / (n₂ − n₁)`;
+  - reviews per calendar year once two December snapshots exist, which finally matches the tax
+    year and replaces the lifetime average.
+- Old Sodra yearly files and closed VMI tax years do not change, so a monthly run could skip them
+  and download only the current year and the current-state registers.
 
 **Monitoring & data quality**
-- The DQ suite (`meta.dq_result`) plus row-count and freshness SLOs per source.
-- Schema-drift detection: the Sodra 2026 file added a column, and the loader reads headers to
-  survive that.
-- Link-drift alerts (`relinked_since_last_run`), score-distribution drift per category, budget and
-  quota alerts.
-- Structured JSON logs (structlog) shipped to the existing observability stack.
+- The DQ suite (`meta.dq_result`) plus freshness and row-count expectations per source.
+- **Schema drift:** today a column missing from a new Sodra file is filled with empty values, which
+  could hide a real loss. Production should list required columns per source and fail loudly when
+  one is missing or its null rate jumps; only optional columns may be filled.
+- **Run log:** fill `meta.run` with per-step duration, rows, API calls and status, to show slow or
+  failed steps and trends.
+- **API budget burn:** calls and cost per provider per month against budget, with alerts at 50 / 80
+  / 100%.
+- **Pipeline health:** link-rate and ambiguity drift per category, links that changed company
+  (`relinked_since_last_run`), score-distribution drift, run failures. Logs are already JSON
+  (structlog) and can go to the existing observability stack.
+- **Monthly digest of changes for flagged companies** (Priority A and watchlist, plus companies
+  that just left either list), ranked by severity, also shown on an "Alerts" page:
+  - entered or left Priority A or the watchlist;
+  - taxes paid changed by more than a set percentage;
+  - a new financial statement was filed;
+  - headcount changed by at least a floor (e.g. 5 people *and* 30%), so hiring one or two people
+    does not raise an alarm;
+  - VAT registered or deregistered;
+  - the company entered liquidation, bankruptcy or reorganisation, or changed its registered
+    address;
+  - a VMI branch opened or closed;
+  - the Google listing closed, reopened or was renamed, its review rate jumped, or the rating of new
+    reviews dropped;
+  - the venue is now linked to a different company.
+- **Month over month** would also compare headcount, revenue (new statement filed), VAT status and
+  JAR status, not only tier, score, taxes and reviews.
 
 **Cost**
-- Bulk downloads over per-entity APIs; Google responses cached on disk by request hash.
-- Distance-ranked k×k quadtree (saturated cells are split by estimated density, and children
-  already covered are skipped).
-- Paid search (Oxylabs) only for unresolved busy places and validation samples.
-- At national scale the main cost is Google Places, so a commercial licence or official data-sharing
-  agreement is needed anyway (see the terms note in DECISIONS.md).
+- Bulk downloads instead of per-company API calls (all official sources); every Google and Oxylabs
+  response cached; budget ledger per provider.
+- **Optimised Google retrieval.** The Places API bills per request (up to 20 places each), so dense
+  areas are cheap per place and sparse ones are not. The previous sweep shows how many places each
+  map cell holds, so later runs can be planned instead of rediscovered:
+  - **Monthly:** refresh only the places that matter (leads, watchlist, near-threshold companies, a
+    few hundred places) by `place_id`.
+  - **Dense cells:** re-sweep the high-activity cells (city centres, shopping streets) monthly to
+    catch new venues.
+  - **Everything else:** a full discovery sweep quarterly.
+- **Scraping is the cheaper path, and it is legitimate here:**
+  - Google search and Maps local results (via Oxylabs or similar) show the same names, ratings and
+    review counts, at roughly $0.50 per 1,000 results, against ~$35 per 1,000 Places API calls.
+  - Ready-made Maps datasets are also cheap: [Outscraper](https://outscraper.com/google-maps-scraper/)
+    charges $3 per 1,000 places after 500 free. A few hundred thousand places across Lithuania would
+    cost roughly €1,000 a month for a full monthly refresh, and much less with the optimised plan
+    above.
+  - Scraping public pages is not illegal in itself. It does conflict with Google's terms, and it
+    breaks when the pages change. For a public-interest use like recovering unpaid tax, the cost
+    difference makes it worth negotiating a data agreement or accepting that maintenance.
+- **Better activity data than reviews:**
+  - VMI's own i.EKA cash-register data is the primary candidate: real turnover, no proxy needed.
+  - [Telia Crowd Insights](https://business.teliacompany.com/crowd-insights/how-it-works)
+    (anonymised mobile-network crowd counts, available in the Baltics, by contract) is a busyness
+    proxy that does not depend on customers writing reviews.
 
 See [DECISIONS.md](DECISIONS.md) for design decisions, rejected alternatives and known limitations.

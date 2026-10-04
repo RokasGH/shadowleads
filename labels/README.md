@@ -38,28 +38,21 @@ an analyst does during an audit. Every level 4 method below comes from the audit
 - The website is not shared by 3 or more locations (a franchisor's or brand's site).
 - The Google listing is not an erroneous entry, for example a name that is only an address.
 
-**Level 4 – manual verification (analyst, during an audit)**
-1. **Website footer:** the operating company is often named at the bottom of the business's own
-   website ("Top Servisas" → UAB "Meistrų centras").
-2. **Privacy policy or terms of service:** they name the data controller, i.e. the operator
-   (ozopadangos.lt → UAB "Padangų parkas", 4play.lt → UAB "Doriantas", olysportsbar.lt → UAB "MECOM
-   GRUPP"). Prefer the privacy policy over shop terms: one website can serve an e-shop company and a
-   salon company (Synth: MB Šilaika runs the shop, MB Du Vilkai the hairdresser).
-3. **Phone number match:** the phone on the Google listing equals the company's phone in a company
-   directory such as scoris.lt or rekvizitai.lt (manual lookup only; directories forbid scraping).
-4. **Only business of its kind at the address:** a single beauty salon in the building supports an
-   address-only link even when the names differ.
-5. **Google listing sanity:** reject erroneous entries, e.g. a name that is only an address, or a
-   foreign-language placeholder at a company's address ("Super tanie jedzenie").
-6. **Scale plausibility:** a national company (a brewery behind the "Švyturys" bar name) is the
-   brand owner, not the bar operator. Multi-location chains (H2Auto, Inter Cars, Carglass) can be
-   correct links, but their declared figures cover every location.
-7. **Franchise check:** a franchised location may be run by a different company from the brand.
-   Leave it undetermined unless the operator is confirmed (PRO BRO Express / Švaros broliai).
-8. **Premises licence:** for beauty and cosmetology premises, the hygiene passport in the LIS
-   licence register (licencijavimas.lt) shows the holder and the premises address. This settles
-   whether the website operator also runs the venue, or a specialist works there under individual
-   activity (MB DanNik / Jekaterinos Depiliacija). Manual lookup only: LIS forbids copying.
+**Level 4 – analyst verification (during an audit or before an inspection)**
+
+Some of these checks also run automatically at levels 1 and 3; the table shows which part is
+automated and what the analyst adds when automation cannot decide.
+
+| Check | Automated (pipeline) | Analyst |
+|---|---|---|
+| **Website footer** – the operator is often named at the bottom of the site ("Top Servisas" → UAB "Meistrų centras") | the scanner reads the homepage and finds a company / VAT code if it is in the page text | opens the site when no code was found (code shown as an image, page rendered by JavaScript, footer only on inner pages) |
+| **Privacy policy / terms of service** – name the data controller, i.e. the operator (ozopadangos.lt → UAB "Padangų parkas", 4play.lt → UAB "Doriantas", olysportsbar.lt → UAB "MECOM GRUPP") | follows up to 3 links (contacts, requisites, privacy, terms); a code on a privacy / terms page outranks other codes on the site | reads the privacy policy when the scanner did not reach it, and prefers it over shop terms: one site can serve an e-shop company and a salon company (Synth: MB Šilaika runs the shop, MB Du Vilkai the hairdresser) |
+| **Phone number match** – the Google phone equals the company's phone | – (candidate: compare with the phone on the business's own website) | looks the phone up in a company directory such as scoris.lt or rekvizitai.lt (manual only; directories forbid scraping) |
+| **Only business of its kind at the address** | address-only links require a single category-consistent company at a non-multi-tenant address | checks the building on the map: a single beauty salon there supports the link even when names differ |
+| **Google listing sanity** | listings named only by an address are out of scope | rejects other erroneous entries, e.g. a foreign-language placeholder at a company's address ("Super tanie jedzenie") |
+| **Scale plausibility** | multi-site companies are flagged; national chains are excluded from peer medians | rejects a national company as the operator of a single venue (a brewery behind the "Švyturys" bar name); accepts chains (H2Auto, Inter Cars, Carglass) knowing their figures cover every location |
+| **Franchise check** | a website shared by 3+ locations is treated as a franchisor or brand site; brand-level evidence never links alone | leaves the verdict undetermined unless the location's operator is confirmed (PRO BRO Express / Švaros broliai) |
+| **Premises licence** – the hygiene passport of beauty / cosmetology premises shows holder and address | – (LIS forbids copying) | looks it up in the LIS register (licencijavimas.lt): it settles whether the website operator also runs the venue or a specialist works there under individual activity (MB DanNik / Jekaterinos Depiliacija) |
 
 **Level 5 – record the decision.** Put the verified company (or a rejection) and the evidence used
 in `link_overrides.csv`, so it applies to every future run.
