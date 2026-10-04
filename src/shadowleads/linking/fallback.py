@@ -1,7 +1,6 @@
 """Fallback linking + independent cross-source validation (V2).
 
 Independent evidence per place (none of it uses the name/address rules of the primary stage):
-  listing_url  - the Google "website" is a company-directory page (rekvizitai.vz.lt/imone/<slug>)
   vmvt         - VMVT food-premises register: company code at the same premises address
   website      - company / VAT code self-declared on the business's own website
   serp         - company code quoted in Google result snippets (Oxylabs)
@@ -28,12 +27,10 @@ from shadowleads.linking.matcher import (
     _candidate,
     write_decisions,
 )
-from shadowleads.linking.normalize import exact_key, name_key, parse_lt_address, parse_street
+from shadowleads.linking.normalize import name_key, parse_lt_address, parse_street
 from shadowleads.log import get_logger
 
 log = get_logger(__name__)
-
-_REKVIZITAI_RE = re.compile(r"rekvizitai\.vz\.lt/(?:en/)?(?:imone|company)/([^/?#]+)")
 
 
 @dataclass(slots=True)
@@ -46,12 +43,6 @@ class PlaceRow:
     website: str | None
     status: str
     ja_kodas: int | None
-
-
-def listing_slug_name(url: str | None) -> str | None:
-    """'https://rekvizitai.vz.lt/imone/uab_roginta/' -> 'uab roginta'."""
-    m = _REKVIZITAI_RE.search(url or "")
-    return m.group(1).replace("_", " ").replace("-", " ") if m else None
 
 
 def _near(a: str, b: str, tolerance: int = 4) -> bool:
@@ -170,10 +161,6 @@ def run_fallback(con: duckdb.DuckDBPyConnection, run_month: str) -> dict[str, in
                 ja = int(raw[2:]) if raw.startswith("c:") else vat_to_ja.get(raw[2:])
                 if ja is not None and ja in index.entities:
                     support[ja].add(source)
-        if slug := listing_slug_name(p.website):
-            seen_codes["listing_url"].add(slug)
-            for ja, _ in index.by_exact.get(exact_key(slug), ()):
-                support[ja].add("listing_url")
         if p.category == "nightlife" and addr is not None and addr.number:
             premises = vmvt_by_addr.get(address_key or "", [])
             for ja, trade in premises:

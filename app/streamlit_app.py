@@ -119,7 +119,7 @@ CATEGORY_CAVEATS = {
     "declared payroll legitimately; dealerships report through national entities.",
 }
 TIER_LABEL = {
-    "A_priority": "A · Priority",
+    "A_priority": "A · Lead",
     "B_watchlist": "B · Watchlist",
     "C_not_flagged": "C · Not flagged",
     "D_insufficient_evidence": "D · Insufficient evidence",
@@ -251,7 +251,7 @@ def page_leads() -> None:
             "- The **score** compares what the company declared (VMI taxes, Sodra payroll, revenue) "
             "with the median of **peers that look equally busy on Google** (same category, review "
             "volume band and legal-form class). Higher = declares less than such peers.\n"
-            "- **A · Priority** needs a verified link to the company, a visibly busy business, peers "
+            "- **A · Lead** needs a verified link to the company, a visibly busy business, peers "
             "paying ≥3× more tax, no other company at the same premises and at least one "
             "corroborating signal. Capped at 20 - the inspection capacity.\n"
             "- **B · Watchlist** scored high but misses one of those conditions (see *hold reason*).\n"
@@ -277,7 +277,7 @@ def page_leads() -> None:
                   l.reviews_total, l.rating_weighted, l.taxes_paid, l.taxes_year, l.peer_median_taxes,
                   l.insured_avg, l.revenue, l.revenue_fy, l.score, l.n_signals,
                   coalesce(l.hold_reason, CASE WHEN l.tier = 'A_priority'
-                           THEN 'meets all Priority A conditions' END) AS hold_reason
+                           THEN 'meets all lead conditions' END) AS hold_reason
            FROM mart.lead l
            LEFT JOIN core.place_snapshot p
              ON p.run_month = l.run_month AND p.place_id = l.place_ids[1]
@@ -521,7 +521,7 @@ def lead_detail(month: str, ja: int) -> None:
 def page_coverage() -> None:
     st.title("Coverage")
     st.caption(
-        "Which Google places could be tied to a registered company. **Purple** = Priority A lead, "
+        "Which Google places could be tied to a registered company. **Purple** = lead, "
         "**orange** = watchlist, blue = linked (not flagged), red = not linked (no candidate, "
         "ambiguous, or likely a natural person). Hover a dot for details; dot size grows with "
         "the number of reviews."

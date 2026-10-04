@@ -24,16 +24,16 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 | Google places in scope | 1,665 | 361 | 1,347 |
 | Linked to a legal entity | 17% | 49% | 42% |
 | ... share of all Google reviews covered | 41% | 68% | 68% |
-| Priority A / watchlist leads | 11 / 8 | 1 / 6 | 2 / 10 |
+| Leads / watchlist | 11 / 8 | 1 / 6 | 2 / 10 |
 
-- 4,017 places swept, 1,031 linked, of which 803 links are trusted enough to feed Priority A.
+- 4,017 places swept, 1,025 linked, of which 799 links are trusted enough to produce a lead.
 - Two manual audits of stratified links:
   - **Audit 1:** 48 links, 75% correct. Its findings led to rule fixes.
   - **Audit 2:** 54 new links after the fixes, 84% correct, and 85% among links trusted for
-    Priority A. Exact-name, website-code and VMVT links were 100% correct; address-only links 67%.
+    leads. Exact-name, website-code and VMVT links were 100% correct; address-only links 67%.
   - Wrong links named in the notes are corrected through analyst overrides.
 - Independent evidence agrees with name-based links in 93% of the cases where both exist; for
-  address-only links the figure is 64%, so those never feed Priority A unless confirmed.
+  address-only links the figure is 64%, so those never produce a lead unless confirmed.
 - External calls: 1,115 Google calls (within the free tier in each month), 749 Oxylabs results
   (300 of them spent on the busiest still-unlinked places), and a few thousand rate-limited requests
   to public registers and business websites.
@@ -103,28 +103,25 @@ visitor volume, and it has no official API).
 3. **Address only**: exactly one consistent company registered at a non-multi-tenant Vilnius
    address.
 4. **Fallbacks** for everything else: codes on the business's own website, VMVT premises,
-   directory URLs, search snippets, trademark owners, job-ad employers.
+   search snippets that name the business, trademark owners, job-ad employers.
 
 Every candidate, its evidence and the decision are stored (`core.match_candidate`,
 `core.place_entity_link`), versioned per month.
 
-**Validation** (`core.link_validation`) works in levels:
-1. name and address rules;
-2. independent evidence;
-3. brand-level evidence;
-4. plausibility checks;
-5. analyst verification;
-6. analyst overrides.
+**Validation** happens after linking and never creates a link; it decides how far each link can be
+trusted (`core.link_validation`, `usable` flag). Automatic checks run on every link, before any
+manual audit:
+- **Plausibility:** the company is active, its activity codes fit the category, its registered
+  address is in Vilnius when the link used an address, it is not linked to more than 3 places
+  across categories and websites, and its website is not shared by 3+ addresses (franchisor site).
+- **Cross-check:** evidence that did not create the link (website code, VMVT premises, search
+  snippets) confirms it or names another company. Conflicts are never usable.
 
-Some checks run at two levels, done by different actors:
-- **Automated:** the website scanner reads the homepage plus up to 3 linked pages (contacts,
-  requisites, privacy policy) for a company or VAT code.
-- **Analyst:** when automation cannot decide (page not reached, no code shown, site rendered by
-  JavaScript), the analyst reads the footer or privacy policy, matches the phone number via a
-  company directory, and checks the premises licence.
-
-See [labels/README.md](labels/README.md) for the levels, which part is automated and which is done
-by the analyst. `shadowleads audit-sample` draws a new audit sample.
+The **analyst audit** covers what automation cannot decide (page not reached, no code shown, site
+rendered by JavaScript): footer or privacy policy read by hand, phone number matched via a company
+directory, premises licence checked. Verdicts that should hold go to `labels/link_overrides.csv`,
+applied on every run. See [labels/README.md](labels/README.md) for the four stages and which part is
+automated; `shadowleads audit-sample` draws a new audit sample.
 
 Trademark and job-ad evidence identify the company behind a *brand*. For franchises (Švaros broliai)
 and groups that run one company per venue (Grill London), that is not the operator, so these sources
@@ -149,7 +146,7 @@ never confirm a link on their own.
   - latest filed revenue, with its fiscal year shown (0.2).
 - **Secondary ratios:** reviews per €1k of taxes and per €1k of revenue, and insured persons per 100
   reviews. Near-zero values are clamped to a floor so the ratios can't explode.
-- **Corroborating signals** (independent of the score, at least one is needed for Priority A):
+- **Corroborating signals** (independent of the score, at least one is needed for a lead):
   - **Near-zero declared figures:** VMI taxes under €500, or revenue under €5,000, for the year.
   - **Staffing floor:** the company's busiest place is open more hours a week than its declared
     staff could cover. Weekly opening hours ÷ 40 (one full-time week) is the minimum number of
@@ -162,7 +159,7 @@ never confirm a link on their own.
     €45,000 VAT registration threshold.
 
 ### Trust: the cost of a wrong lead
-Priority A is capped at 20 per month (the analyst's capacity) and requires *all* of:
+**Leads** (tier A) are capped at 20 per month (the analyst's capacity) and require *all* of:
 - a usable link;
 - a visibly busy business;
 - peers paying at least 3× more tax;
@@ -227,7 +224,7 @@ uv run streamlit run app/streamlit_app.py
 
 **Committed example:** `examples/<month>/` holds the tables of a real run as Parquet:
 - every Google place of the snapshot and how each was (or was not) linked;
-- every **scored** company: all four tiers, not only Priority A and the watchlist;
+- every **scored** company: all four tiers, not only leads and the watchlist;
 - those companies' official records (VMI taxes, Sodra months, revenue, VMVT premises, VMI branches).
 
 It leaves out the national registers themselves (230k companies, 3M Sodra rows) and the raw Google
@@ -361,9 +358,9 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 - **Pipeline health:** link-rate and ambiguity drift per category, links that changed company
   (`relinked_since_last_run`), score-distribution drift, run failures. Logs are already JSON
   (structlog) and can go to the existing observability stack.
-- **Monthly digest of changes for flagged companies** (Priority A and watchlist, plus companies
+- **Monthly digest of changes for flagged companies** (leads and watchlist, plus companies
   that just left either list), ranked by severity, also shown on an "Alerts" page:
-  - entered or left Priority A or the watchlist;
+  - entered or left the lead list or the watchlist;
   - taxes paid changed by more than a set percentage;
   - a new financial statement was filed;
   - headcount changed by at least a floor (e.g. 5 people *and* 30%), so hiring one or two people

@@ -8,40 +8,41 @@ automatic rule.
 | `match_audit.csv`, `match_audit_2.csv`, … | Stratified samples of place → company links (from `shadowleads audit-sample --out labels/match_audit_N.csv`, each excluding links already audited). Set `verdict` to `correct` or `wrong`, and leave it empty when undetermined. Write in `note` how you checked. Wrong links are excluded from leads, and the audit precision is reported. |
 | `link_overrides.csv` | Final decisions: `set` links a place to the given company code, `reject` removes a link. `reason` records the evidence, e.g. "privacy policy names X". |
 
-## How a link is validated: levels of fallback
+## From Google place to verified company: four stages
 
-Each level is used when the previous ones cannot decide. Levels 0–3 are automatic; level 4 is what
-an analyst does during an audit. Every level 4 method below comes from the audit notes.
+**Stage 1 – linking (automatic, `shadowleads link` and `link-fallback`)** decides *which* company a
+place belongs to. Listings that are not real businesses are removed first: closed, outside Vilnius,
+wrong type, or named only by an address ("upės g 5 vilnius").
+- **Name and address rules:**
+  - exact full name vs the JAR legal name or a VMI branch trade name, plus a fitting activity code
+    or the same building;
+  - core name (generic words removed) with the address, or a rare name plus fitting activity;
+  - address only, when one consistent company sits at a single-tenant address.
+- **Fallbacks**, for places those rules cannot settle:
+  - a company or VAT code on the business's own website (a code on the privacy-policy or terms
+    page wins over other codes on the site);
+  - the VMVT food-premises register;
+  - a company code in Google search snippets that also name the business;
+  - brand-level evidence (trademark owner, job-ad employer), which never links on its own.
 
-**Level 0 – name and address rules (automatic)**
-- The exact full name matches a JAR legal name or a VMI branch trade name, corroborated by a
-  fitting activity code or the same building as the registered address.
-- A core name match (generic words removed) needs the address, or a rare name plus a fitting
-  activity code.
-- Address only: one consistent company at a single-tenant Vilnius address. This is the weakest
-  rule (67% precision in audit 2).
+**Stage 2 – automatic checks (`shadowleads validate`, before any audit)** decide *how far* each link
+can be trusted. Results are in `core.link_validation`, and only links marked `usable` can produce a
+lead.
+- **Plausibility:**
+  - the company is active in the JAR register;
+  - its activity codes (Sodra main activity, VMI registered activities) fit the category;
+  - its registered address is in Vilnius city when an address match was used;
+  - it is not linked to more than 3 places across different categories and websites;
+  - its website is not shared by 3 or more addresses (a franchisor or brand site).
+- **Cross-check:** evidence that did *not* create the link is compared with it. A name-based link
+  is confirmed when the business's website or the VMVT register names the same company, and is in
+  conflict when they name another. Conflicts are never usable.
 
-**Level 1 – independent official or self-declared evidence (automatic)**
-- A company or VAT code published on the business's own website. When the privacy-policy or terms
-  page carries a code, that code wins over codes elsewhere on the site.
-- The VMVT food-premises register: company code at the same premises.
-- The Google "website" is a company-directory page (rekvizitai URL).
-- A company code quoted in Google search snippets that also mention the business name.
+**Stage 3 – analyst audit (manual, a sample or before an inspection)** covers what stages 1–2
+cannot decide. Draw a sample with `shadowleads audit-sample` and record verdicts in
+`match_audit_N.csv`. Methods, all from the two audits:
 
-**Level 2 – brand-level evidence (automatic, never enough on its own)**
-- The trademark owner (State Patent Bureau, LINTA) and job-ad employers. These name the company
-  behind a brand, which may be a franchisor or a group company rather than the venue operator.
-
-**Level 3 – plausibility checks (automatic)**
-- The company is active, registered in Vilnius city, and its activity code fits the category.
-- The company is not spread implausibly across unrelated places.
-- The website is not shared by 3 or more locations (a franchisor's or brand's site).
-- The Google listing is not an erroneous entry, for example a name that is only an address.
-
-**Level 4 – analyst verification (during an audit or before an inspection)**
-
-Some of these checks also run automatically at levels 1 and 3; the table shows which part is
-automated and what the analyst adds when automation cannot decide.
+The table shows which part already runs automatically in stages 1–2 and what the analyst adds.
 
 | Check | Automated (pipeline) | Analyst |
 |---|---|---|
@@ -54,10 +55,10 @@ automated and what the analyst adds when automation cannot decide.
 | **Franchise check** | a website shared by 3+ locations is treated as a franchisor or brand site; brand-level evidence never links alone | leaves the verdict undetermined unless the location's operator is confirmed (PRO BRO Express / Švaros broliai) |
 | **Premises licence** – the hygiene passport of beauty / cosmetology premises shows holder and address | – (LIS forbids copying) | looks it up in the LIS register (licencijavimas.lt): it settles whether the website operator also runs the venue or a specialist works there under individual activity (MB DanNik / Jekaterinos Depiliacija) |
 
-**Level 5 – record the decision.** Put the verified company (or a rejection) and the evidence used
-in `link_overrides.csv`, so it applies to every future run.
+**Stage 4 – record the decision.** Put the verified company (or a rejection) and the evidence used
+in `link_overrides.csv`, so it applies on every future run.
 
-Candidates for automating level 4:
+Candidates for moving stage 3 checks into stage 1–2:
 - **Phone match:** only with a licensed or official source of company phone numbers; the open
   registers do not publish them and directories forbid scraping.
 - **Deeper website scans** that always fetch the privacy-policy page: the scanner currently stops

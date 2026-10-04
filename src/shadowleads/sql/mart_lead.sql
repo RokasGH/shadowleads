@@ -25,7 +25,7 @@ CREATE OR REPLACE TEMP TABLE _cfg AS SELECT
     3.0     AS min_gap_ratio,        -- peers pay >= 3x more tax
     40.0    AS fte_hours,            -- weekly hours of one full-time employee
     8       AS min_peers,
-    20      AS analyst_capacity;     -- Priority-A leads per month
+    20      AS analyst_capacity;     -- leads (tier A) per month
 
 -- busy thresholds come from the whole Google universe of the category, not from linked entities
 CREATE OR REPLACE TEMP TABLE _busy AS

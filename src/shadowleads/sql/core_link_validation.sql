@@ -3,7 +3,7 @@
 --   V3 manual audit labels (labels/match_audit*.csv) and analyst overrides (labels/link_overrides.csv),
 --   V4 link stability: was the place linked to a different company in the previous snapshot?
 -- Other months' rows are kept, so links can be compared over time.
--- Evidence families: premises (VMVT), website, serp, listing_url, brand (trademark owner / job-ad
+-- Evidence families: premises (VMVT), website, serp, brand (trademark owner / job-ad
 -- employer). Brand-level sources name the company behind a BRAND - for franchises and groups that
 -- is not the venue operator - so they count as one family and never confirm a link on their own.
 -- `usable` = the link may feed Priority-A leads; everything else is at most watchlist.
