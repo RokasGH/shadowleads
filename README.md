@@ -247,6 +247,39 @@ labels/      analyst audit labels and link overrides (inputs)
 tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 ```
 
+## Where it can fail
+
+**Wrong matches** (2 audits; 84% of audited links correct, 85% among links trusted for leads):
+- **Same brand, different operator:** a brewery owns the bar's brand and trademark, a franchisor
+  owns the website, or a group runs one company per venue. Brand-level evidence never links on its
+  own, but the audit still found a brewery linked to a bar (now rejected by an override).
+- **One site, several companies:** an e-shop company and a salon company share a website (Synth:
+  MB Šilaika runs the shop, MB Du Vilkai the salon). Privacy-policy codes now win.
+- **Address-only and core-name links** are the weakest (67% and 75% correct); address-only links
+  never produce a lead unless independent evidence confirms them.
+- **Erroneous Google listings** (an address as the name, a non-existent business) were linked to
+  whoever was registered there; listings named only by an address are now out of scope.
+- **Not found at all:** natural persons, companies registered elsewhere, salons with only a
+  Facebook or Treatwell page (17% of hair/beauty places linked). This is a recall problem, and it
+  biases leads toward businesses with websites.
+
+**False positives** (legitimate reasons a busy business declares little):
+- **Hair and beauty:** chairs rented to self-employed specialists, who pay their own taxes, so the
+  company looks empty. 10 of the 15 leads are salons, so this is the main risk.
+- **Group staffing:** staff employed and taxes paid by a sister company.
+- **Owner-operated MB/IĮ:** the owner's taxes are paid personally (mitigated by separate peers).
+- **Stale or skewed reviews:** reviews from a previous operator, bought reviews, tourist-heavy
+  venues; the lifetime count cannot be tied to the tax year.
+- **Stale declared data:** revenue is mostly FY2024; a company's 2025 taxes may be unpublished
+  (then 2024 is used and shown).
+- **Ranking by ratio, not euros:** the score is a log ratio, so a salon declaring €4 against a
+  €1.3k peer median ranks above a bar declaring €1.2k against €66k. Ranking leads by the euro gap
+  would put the larger amounts first.
+
+**Not yet proven:** link precision is measured, lead precision is not. Inspection outcomes
+(violation found / clean) are the labels that would measure it; until then each lead is a
+documented hypothesis with its explanation and sources, not a verdict.
+
 ## Towards production
 
 **Scalability (3 categories in Vilnius → every business in Lithuania)**

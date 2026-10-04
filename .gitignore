@@ -22,5 +22,5 @@ dist/
 .vscode/
 
 
-# local run outputs contain real names; the public example lives in examples/ (pseudonymised)
+# local run outputs; the committed example of a real run lives in examples/
 output/
