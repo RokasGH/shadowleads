@@ -173,8 +173,8 @@ def reasons(r: pd.Series) -> list[str]:
     out.append(
         f"**Visible activity:** {int(r.reviews_total):,} Google reviews across {int(r.n_places)} "
         f"Vilnius place(s), ≈{r.reviews_per_year:,.0f} per year, rating {r.rating_weighted}. "
-        f"Busy threshold for the category: {int(r.busy_floor or 0):,}+ reviews and "
-        f"{getattr(r, 'busy_reviews_per_year_floor', 0) or 0:,.0f}+ per year."
+        f"Busy threshold for the category: "
+        f"{getattr(r, 'busy_reviews_per_year_floor', 0) or 0:,.1f}+ reviews per year."
     )
     if pd.notna(r.peer_median_taxes):
         share = (

@@ -53,16 +53,14 @@ an address are out of scope. **Audit 2** covered 54 new links: 84% correct (43 o
 **Visible activity** = lifetime Google reviews over the company's places ÷ years active (since JAR
 registration, 1–7 years: most reviews are recent, so a longer window understates older companies).
 
-**Busy** = both a lifetime review total at or above the category's 75th percentile of **all**
-Google places in Vilnius, linked or not, and reviews per active year in the top 40% of linked
-companies in the category. Google places have no opening date, so only linked companies have a
-per-year rate; the second check stops an old, quiet company passing on its accumulated total.
-Ratings ≤3.5 or ≥4.8 need the 90th percentile on both: extreme ratings attract disproportionate
-reviews.
+**Busy** = reviews per active year in the top 40% of linked companies in the category, with at
+least 30 reviews. Ratings ≤3.5 or ≥4.8 need the top 20% and 75 reviews: extreme ratings attract
+disproportionate reviews. A lifetime-total test was dropped: it let old, quiet companies pass and
+blocked young, busy ones.
 
 **Peers** = same category × visible-activity quintile × legal form (companies vs MB/IĮ, whose owners
 pay part of their taxes personally). All quintiles are computed so every company has a comparison;
-in practice busy companies are almost all in quintiles 4–5. The peer **median** of each declared figure
+in practice busy companies are in quintiles 4–5, plus a few on the cutoff in quintile 3. The peer **median** of each declared figure
 is taken only from *clean* peers: no branches outside Vilnius, a VMI record, an activity code that fits the
 category, and at most 3 places. National chains otherwise inflate the medians for small firms. A
 group with fewer than 8 clean peers falls back to category × quintile, then category.

@@ -24,7 +24,7 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 | Google places in scope | 1,665 | 361 | 1,347 |
 | Linked to a legal entity | 17% | 49% | 42% |
 | ... share of all Google reviews covered | 41% | 68% | 68% |
-| Leads / watchlist | 10 / 5 | 1 / 7 | 2 / 9 |
+| Leads / watchlist | 10 / 9 | 1 / 9 | 4 / 17 |
 
 - 4,017 places swept, 1,025 linked, of which 799 links are trusted enough to produce a lead.
 - Two manual audits of stratified links:
@@ -134,15 +134,11 @@ never confirm a link on their own.
   company's lifetime count by its full age would understate its current activity. The result is
   an average, not a count of reviews in a given year: the Places API returns only the lifetime
   total.
-- **Busy** needs both:
-  - a lifetime review total at or above the category's 75th percentile of *all* Google places
-    (linked or not);
-  - reviews per active year in the category's top 40% of linked companies. Google places have no
-    opening date, so the per-year rate exists only for linked companies; without this check an
-    old, quiet company would pass on its accumulated total.
-
-  Very low or very high ratings must reach the 90th percentile on both: they attract
-  disproportionate reviews, so they need more evidence rather than adjusted counts.
+- **Busy:** reviews per active year in the category's top 40% of linked companies, and at least 30
+  reviews in total. A very low or very high rating (≤3.5 or ≥4.8) needs the top 20% and 75
+  reviews: such ratings attract disproportionate reviews, so they need more evidence rather than
+  adjusted counts. A lifetime total is deliberately not used as a busy test: it lets old, quiet
+  companies pass and blocks young, busy ones.
 - **Peers:** same category × review-volume quintile × legal form (MB/IĮ owners pay part of their
   taxes personally). Medians come from single-site, activity-consistent peers only, so national
   chains don't inflate them.
@@ -344,10 +340,11 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
   data. For the ~860 linked companies they could be fetched directly, turning the revenue
   dimension from FY2024 into FY2025; until then each run picks up FY2025 rows as they appear in
   open data.
-  Only companies in activity quintiles 4–5 need them: quintiles 1–3 can never be busy, so they are
-  never leads, and they are not peers of a busy company (peers share the quintile; the category-wide
-  fallback for groups with too few peers was not needed for any busy company). Fetching only
-  quintiles 4–5 cuts these per-company lookups by about 60% without changing any lead.
+  Only companies in activity quintiles 3–5 need them: the busy cutoff (top 40% per year) never
+  reaches quintiles 1–2, so those companies are never leads and never peers of a busy company
+  (peers share the quintile; the category-wide fallback for groups with too few peers was not
+  needed for any busy company). Skipping quintiles 1–2 cuts these per-company lookups by about 40%
+  without changing any lead.
 - Google: see the review history and optimised retrieval below.
 - **Review history:** `core.place_snapshot` already keeps every place's review count and rating per
   monthly snapshot. A `mart.place_review_history` view would add:
