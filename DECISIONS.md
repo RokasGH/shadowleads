@@ -72,9 +72,6 @@ group with fewer than 8 clean peers falls back to category × quintile, then cat
 | Sodra contributions; headcount when Sodra hides them (≤3 insured) | 0.3 |
 | Revenue from the latest filed statement, labelled with its fiscal year | 0.2 |
 
-The log gap has no unit (ln 3 means "peers declare 3× more"), so euros and headcount can be averaged.
-A missing figure is left out and the remaining weights are rescaled.
-
 **Secondary:** ratios (reviews per €1k taxes or revenue, insured per 100 reviews), with near-zero
 values clamped.
 
@@ -119,12 +116,14 @@ pytest/Hypothesis in CI.
   premises address for beauty or auto. JAR management-body data (`JAR_VALDYMAS.csv`) could link
   group companies through shared directors.
 - **One website, several companies:** an e-shop company and a service company can share a site.
-- **VMI coverage is unexplained:** the open tax data has 2025 rows for ~130k companies out of
-  ~235k registered, and VMI does not say why the rest are absent (no tax paid, or withheld). Absent
-  companies are therefore never leads.
+- **VMI coverage is unexplained:** the open tax data has rows for ~144k of ~235k registered
+  companies (FY2025: ~129k; a company without a 2025 row is scored on its 2024 taxes). VMI does not
+  say why the rest are absent (no tax paid, or withheld), so a company with no row in any year is
+  never a lead.
 - **Revenue lags:** FY2025 statements were due by mid-2026, but the open export was last refreshed
-  in March 2026 and covers ~3% of companies; the rest are only available per company from Registrų
-  centras, outside open data. The score uses each company's latest year and shows it.
+  in March 2026 and covers ~3% of companies. The rest are available only per company from Registrų
+  centras, outside open data; they could be fetched for the linked companies. The score uses each
+  company's latest year and shows it.
 - **Reviews ≠ visitors, and not per tax year:** the API returns only the lifetime review count, so
   visible activity cannot be matched to the tax year and lags growth or decline. Review habits
   vary with clientele (tourists), bought reviews exist, and reviews may predate the current

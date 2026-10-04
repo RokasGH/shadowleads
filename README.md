@@ -332,8 +332,12 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 **Freshness (sources change at different rates)**
 - A monthly cadence for everything: registers and declarations change slowly, and daily updates
   would add cost without changing a monthly lead list.
-- Financial statements are picked up when they appear in open data (FY2025 is filed but not yet
-  exported).
+- **Financial statements (FY2025 revenue):** companies filed FY2025 statements by mid-2026, but the
+  open export was last refreshed in March 2026 and covers ~3% of companies. The rest are available
+  only per company from Registrų centras, as documents ordered through its e-services, not as open
+  data. For the ~860 linked companies they could be fetched directly, turning the revenue
+  dimension from FY2024 into FY2025; until then each run picks up FY2025 rows as they appear in
+  open data.
 - Google: see the review history and optimised retrieval below.
 - **Review history:** `core.place_snapshot` already keeps every place's review count and rating per
   monthly snapshot. A `mart.place_review_history` view would add:
