@@ -24,7 +24,7 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 | Google places in scope | 1,665 | 361 | 1,347 |
 | Linked to a legal entity | 17% | 49% | 42% |
 | ... share of all Google reviews covered | 41% | 68% | 68% |
-| Leads / watchlist | 11 / 8 | 1 / 6 | 2 / 10 |
+| Leads / watchlist | 8 / 6 | 1 / 9 | 2 / 10 |
 
 - 4,017 places swept, 1,025 linked, of which 799 links are trusted enough to produce a lead.
 - Two manual audits of stratified links:
@@ -130,13 +130,19 @@ never confirm a link on their own.
 ### Scoring: "declares far less than peers who look equally busy"
 - **Visible activity:** the **lifetime** Google review count across the company's Vilnius places,
   divided by its years active. Years active = time since the company's registration date in the
-  JAR register, at least 1 and at most 10 years. The cap reflects that Google reviews only became
-  common in the mid-2010s, so a company registered in 1995 counts as active for 10 years. The
-  result is an average, not a count of reviews in a given year: the Places API returns only the
-  lifetime total.
-  A company is "busy" if it is at or above the category's 75th percentile of *all* Google places.
-  Very low or very high ratings must reach the 90th percentile: they attract disproportionate
-  reviews, so they need more evidence rather than adjusted counts.
+  JAR register, at least 1 and at most 5 years. Most Google reviews are recent, so dividing an old
+  company's lifetime count by its full age would understate its current activity. The result is
+  an average, not a count of reviews in a given year: the Places API returns only the lifetime
+  total.
+- **Busy** needs both:
+  - a lifetime review total at or above the category's 75th percentile of *all* Google places
+    (linked or not);
+  - reviews per active year in the category's top 40% of linked companies. Google places have no
+    opening date, so the per-year rate exists only for linked companies; without this check an
+    old, quiet company would pass on its accumulated total.
+
+  Very low or very high ratings must reach the 90th percentile on both: they attract
+  disproportionate reviews, so they need more evidence rather than adjusted counts.
 - **Peers:** same category × review-volume quintile × legal form (MB/IĮ owners pay part of their
   taxes personally). Medians come from single-site, activity-consistent peers only, so national
   chains don't inflate them.

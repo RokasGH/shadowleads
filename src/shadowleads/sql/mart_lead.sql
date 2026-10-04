@@ -2,6 +2,8 @@
 --
 -- PRIMARY SCORE - declared vs PEERS WITH SIMILAR VISIBLE ACTIVITY
 --   visible activity  = Google reviews per active year, summed over the entity's Vilnius places
+--   visibly busy      = lifetime reviews >= category p75 of all Google places AND reviews per year
+--                       >= p60 of linked companies in the category (p90 for both if rating extreme)
 --   peer group        = category x reviews-per-year quintile x legal-form class (company | MB/IĮ)
 --   clean peers only  = single-site in Vilnius, has a VMI record, activity code fits the category
 --                       (national chains would otherwise inflate the medians for small firms)
@@ -42,10 +44,11 @@ CREATE OR REPLACE TEMP TABLE _base AS
 SELECT
     ea.*,
     c.*,
-    -- visible activity: reviews per active year; years active = since JAR registration, 1..10 years
-    -- (the 2015 floor below no longer binds: 10 years before the 2026 snapshots is 2016)
-    greatest(1.0, least(10.0, date_diff('day',
-        greatest(coalesce(ea.registered_on, DATE '2015-01-01'), DATE '2015-01-01'),
+    -- visible activity: reviews per active year; years active = since JAR registration, 1..5 years
+    -- (most Google reviews are recent, so a longer window understates older companies' current
+    -- activity; an unknown registration date counts as the full 5 years)
+    greatest(1.0, least(5.0, date_diff('day',
+        coalesce(ea.registered_on, DATE '1900-01-01'),
         CAST(ea.run_month || '-01' AS DATE)) / 365.25))                          AS years_active,
     (ea.rating_weighted <= 3.5 OR ea.rating_weighted >= 4.8)                    AS rating_extreme,
     ea.reviews_total >= c.min_reviews * CASE WHEN ea.rating_weighted <= 3.5
@@ -53,7 +56,7 @@ SELECT
     CASE WHEN ea.rating_weighted <= 3.5 OR ea.rating_weighted >= 4.8
          THEN bz.busy_floor_extreme ELSE bz.busy_floor END                      AS busy_floor,
     ea.reviews_total >= CASE WHEN ea.rating_weighted <= 3.5 OR ea.rating_weighted >= 4.8
-         THEN bz.busy_floor_extreme ELSE bz.busy_floor END                      AS visibly_busy,
+         THEN bz.busy_floor_extreme ELSE bz.busy_floor END                      AS busy_lifetime,
     CASE WHEN ea.owner_operated THEN 'owner_operated' ELSE 'company' END        AS form_class,
     -- declared dimensions (NULL = unknown, never silently 0)
     -- VMI taxes of the last complete year; companies whose 2025 row is not yet published are
@@ -75,11 +78,25 @@ CROSS JOIN _cfg c
 LEFT JOIN _busy bz ON bz.main_category = ea.main_category
 WHERE ea.run_month = '{run_month}' AND NOT coalesce(ea.any_self_service, false);
 
+-- "visibly busy" needs BOTH: a lifetime review total at/above the Google-wide floor (above), and
+-- reviews per active year in the category's top 40% of linked companies (top 10% when the rating
+-- is extreme). Google places carry no opening date, so the per-year rate exists only for linked
+-- companies; without it an old, quiet company passes on its accumulated lifetime total.
 CREATE OR REPLACE TEMP TABLE _peers AS
-SELECT *,
-       reviews_total / years_active AS reviews_per_year,
-       ntile(5) OVER (PARTITION BY main_category ORDER BY reviews_total / years_active) AS activity_quintile
-FROM _base;
+WITH r AS (SELECT *, reviews_total / years_active AS reviews_per_year FROM _base),
+rf AS (
+    SELECT main_category,
+           quantile_cont(reviews_per_year, 0.60) AS busy_rpy_floor,
+           quantile_cont(reviews_per_year, 0.90) AS busy_rpy_floor_extreme
+    FROM r GROUP BY main_category
+)
+SELECT r.*,
+       ntile(5) OVER (PARTITION BY r.main_category ORDER BY r.reviews_per_year) AS activity_quintile,
+       CASE WHEN r.rating_extreme THEN rf.busy_rpy_floor_extreme ELSE rf.busy_rpy_floor END
+                                                                                AS busy_rpy_floor,
+       r.busy_lifetime AND r.reviews_per_year >= CASE WHEN r.rating_extreme
+           THEN rf.busy_rpy_floor_extreme ELSE rf.busy_rpy_floor END            AS visibly_busy
+FROM r JOIN rf USING (main_category);
 
 -- peer medians at three fallback levels (most specific level with >= min_peers wins)
 CREATE OR REPLACE TEMP TABLE _medians AS
@@ -163,7 +180,8 @@ SELECT
     s.sig_near_zero_declared, s.sig_staffing_floor, s.sig_vat_gap,
     (s.sig_near_zero_declared::INT + s.sig_staffing_floor::INT + s.sig_vat_gap::INT) AS n_signals,
     -- trust
-    s.enough_reviews, s.visibly_busy, round(s.busy_floor) AS busy_floor, s.rating_extreme, s.all_links_usable, s.weakest_confidence,
+    s.enough_reviews, s.visibly_busy, round(s.busy_floor) AS busy_floor,
+    round(s.busy_rpy_floor, 1) AS busy_reviews_per_year_floor, s.rating_extreme, s.all_links_usable, s.weakest_confidence,
     s.link_methods, s.validation_statuses, s.owner_operated, s.multi_site,
     s.new_entity, s.entity_age_months, s.has_vmi_record, s.has_sodra_record, s.activity_fits,
     -- lineage
@@ -174,7 +192,8 @@ SELECT
         WHEN NOT s.has_vmi_record THEN 'no VMI tax record (absence is not proof of zero)'
         WHEN s.score IS NULL THEN 'too few comparable peers'
         WHEN NOT s.enough_reviews THEN 'too few reviews for the rating profile'
-        WHEN NOT s.visibly_busy THEN 'not visibly busy vs category (' || round(s.busy_floor)::INT || '+ reviews needed)'
+        WHEN NOT s.visibly_busy THEN 'not visibly busy vs category (' || round(s.busy_floor)::INT
+             || '+ reviews and ' || round(s.busy_rpy_floor)::INT || '+ reviews per year needed)'
         WHEN s.gap_taxes < ln(s.min_gap_ratio) THEN 'taxes in line with peers'
         WHEN NOT s.all_links_usable THEN 'link to legal entity not verified enough'
         WHEN (s.sig_near_zero_declared::INT + s.sig_staffing_floor::INT + s.sig_vat_gap::INT)
