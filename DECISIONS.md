@@ -51,7 +51,7 @@ an address are out of scope. **Audit 2** covered 54 new links: 84% correct (43 o
 
 ## 4. Metric: busy on Google, low declared figures compared with similar businesses
 **Visible activity** = lifetime Google reviews over the company's places ÷ years active (since JAR
-registration, 1–5 years: most reviews are recent, so a longer window understates older companies).
+registration, 1–7 years: most reviews are recent, so a longer window understates older companies).
 
 **Busy** = both a lifetime review total at or above the category's 75th percentile of **all**
 Google places in Vilnius, linked or not, and reviews per active year in the top 40% of linked

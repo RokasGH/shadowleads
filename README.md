@@ -24,7 +24,7 @@ opt-in, because it spends API quota: `SHADOWLEADS_MODE=live docker compose up`, 
 | Google places in scope | 1,665 | 361 | 1,347 |
 | Linked to a legal entity | 17% | 49% | 42% |
 | ... share of all Google reviews covered | 41% | 68% | 68% |
-| Leads / watchlist | 8 / 6 | 1 / 9 | 2 / 10 |
+| Leads / watchlist | 10 / 5 | 1 / 7 | 2 / 9 |
 
 - 4,017 places swept, 1,025 linked, of which 799 links are trusted enough to produce a lead.
 - Two manual audits of stratified links:
@@ -130,7 +130,7 @@ never confirm a link on their own.
 ### Scoring: "declares far less than peers who look equally busy"
 - **Visible activity:** the **lifetime** Google review count across the company's Vilnius places,
   divided by its years active. Years active = time since the company's registration date in the
-  JAR register, at least 1 and at most 5 years. Most Google reviews are recent, so dividing an old
+  JAR register, at least 1 and at most 7 years. Most Google reviews are recent, so dividing an old
   company's lifetime count by its full age would understate its current activity. The result is
   an average, not a count of reviews in a given year: the Places API returns only the lifetime
   total.
@@ -344,6 +344,10 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
   data. For the ~860 linked companies they could be fetched directly, turning the revenue
   dimension from FY2024 into FY2025; until then each run picks up FY2025 rows as they appear in
   open data.
+  Only companies in activity quintiles 4–5 need them: quintiles 1–3 can never be busy, so they are
+  never leads, and they are not peers of a busy company (peers share the quintile; the category-wide
+  fallback for groups with too few peers was not needed for any busy company). Fetching only
+  quintiles 4–5 cuts these per-company lookups by about 60% without changing any lead.
 - Google: see the review history and optimised retrieval below.
 - **Review history:** `core.place_snapshot` already keeps every place's review count and rating per
   monthly snapshot. A `mart.place_review_history` view would add:

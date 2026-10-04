@@ -44,10 +44,10 @@ CREATE OR REPLACE TEMP TABLE _base AS
 SELECT
     ea.*,
     c.*,
-    -- visible activity: reviews per active year; years active = since JAR registration, 1..5 years
+    -- visible activity: reviews per active year; years active = since JAR registration, 1..7 years
     -- (most Google reviews are recent, so a longer window understates older companies' current
-    -- activity; an unknown registration date counts as the full 5 years)
-    greatest(1.0, least(5.0, date_diff('day',
+    -- activity; an unknown registration date counts as the full 7 years)
+    greatest(1.0, least(7.0, date_diff('day',
         coalesce(ea.registered_on, DATE '1900-01-01'),
         CAST(ea.run_month || '-01' AS DATE)) / 365.25))                          AS years_active,
     (ea.rating_weighted <= 3.5 OR ea.rating_weighted >= 4.8)                    AS rating_extreme,
