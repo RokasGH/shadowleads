@@ -6,8 +6,12 @@ Figures refer to the committed run (`examples/2026-09`).
 ## 1. Unit of analysis: the legal entity, not the Google place
 Declared activity (Sodra, VMI, financial statements) exists only per **company code**, so every
 Google place is linked to one entity and visible activity is summed over the entity's Vilnius places.
-*Rejected:* allocating entity-level taxes to places (no basis for the split). *Consequence:* entities
-operating outside Vilnius look better-declared than they are (safe direction, flagged `multi_site`).
+*Rejected:* allocating entity-level taxes to places (no basis for the split). *Consequence:* a
+company with branches outside Vilnius (`multi_site`) declares taxes and staff for **all** its
+locations, but only its **Vilnius** places are counted as visible activity, because only Vilnius was
+swept. Its declared figures therefore look large relative to what we see, so it is *less* likely to
+be flagged. That is the safe direction for honest businesses (no false accusation), at the cost of
+possibly missing evasion at such companies.
 A venue run by two companies at once would look worse; a rule for it was tried, but in the data
 it only caught different businesses in the same building, so it was dropped.
 
@@ -83,8 +87,9 @@ having their counts adjusted).
 **Limitation: reviews cannot be matched to the tax year.** Declared figures are per calendar or
 fiscal year (VMI 2025, revenue FY2024/25), but the Places API returns only the lifetime review count
 plus 5 "most relevant" reviews, with no per-period counts. Reviews per year is therefore a lifetime
-average: total reviews divided by years active, counted from the later of the company's
-registration and 2015 (when Google reviews took off), between 1 and 10 years. It understates recent growth and overstates a venue whose popularity has faded. Exact
+average: total reviews divided by years active (time since the company's registration date in the
+JAR register, at least 1 and at most 10 years; the cap reflects that Google reviews only became
+common in the mid-2010s). It understates recent growth and overstates a venue whose popularity has faded. Exact
 reviews per tax year would need review dates, which can only be scraped from the review list
 (SerpApi or Oxylabs, about 1 request per 10–20 reviews). That is affordable for the ~35 Priority A
 and watchlist companies but not for every place; monthly snapshots of the review count give exact
@@ -103,11 +108,15 @@ scales linearly with reviews), and an ML model (no ground truth; not explainable
 Priority A (capped at 20/month, the analyst's capacity) requires all of: a usable link, a visibly
 busy entity, peers paying at least 3x more tax, the entity at least 12 months old, a VMI record
 (missing ≠ zero; a company whose 2025 row is not yet published is scored on its 2024 taxes, labelled
-`taxes_year`), and at least one
-corroborating signal (≥2 if the rating is extreme):
-- near-zero declared figures;
-- opening hours that need more staff than declared;
-- no VAT registration while peers are above the €45k threshold.
+`taxes_year`), and at least one corroborating signal. Two are needed if the rating is extreme (a
+review-weighted average of 3.5 or lower, or 4.8 or higher), because polarised customers review more
+often, which inflates the review count:
+- **near-zero declared figures:** taxes under €500 or revenue under €5,000 for the year;
+- **staffing floor:** the busiest place's weekly opening hours ÷ 40 is greater than the average
+  insured people over the last 12 months **+ 1** (one person on site whenever it is open, plus one
+  uninsured owner or manager allowed). Not applied to MB/IĮ or self-service car washes;
+- **VAT gap:** not VAT-registered although the peers' median revenue is above the €45,000
+  threshold.
 
 Everything else is watchlist or "not flagged", each with a stated `hold_reason`, and every lead
 prints legitimate explanations for its category (chair rental, family labour, group staffing).

@@ -47,7 +47,7 @@ automated and what the analyst adds when automation cannot decide.
 |---|---|---|
 | **Website footer** – the operator is often named at the bottom of the site ("Top Servisas" → UAB "Meistrų centras") | the scanner reads the homepage and finds a company / VAT code if it is in the page text | opens the site when no code was found (code shown as an image, page rendered by JavaScript, footer only on inner pages) |
 | **Privacy policy / terms of service** – name the data controller, i.e. the operator (ozopadangos.lt → UAB "Padangų parkas", 4play.lt → UAB "Doriantas", olysportsbar.lt → UAB "MECOM GRUPP") | follows up to 3 links (contacts, requisites, privacy, terms); a code on a privacy / terms page outranks other codes on the site | reads the privacy policy when the scanner did not reach it, and prefers it over shop terms: one site can serve an e-shop company and a salon company (Synth: MB Šilaika runs the shop, MB Du Vilkai the hairdresser) |
-| **Phone number match** – the Google phone equals the company's phone | – (candidate: compare with the phone on the business's own website) | looks the phone up in a company directory such as scoris.lt or rekvizitai.lt (manual only; directories forbid scraping) |
+| **Phone number match** – the phone on the Google listing (or the business's website) appears under the company in a company directory | – (the official registers publish no phone numbers; directories such as scoris.lt and rekvizitai.lt forbid scraping) | searches the phone number on scoris.lt or rekvizitai.lt and checks which company it belongs to |
 | **Only business of its kind at the address** | address-only links require a single category-consistent company at a non-multi-tenant address | checks the building on the map: a single beauty salon there supports the link even when names differ |
 | **Google listing sanity** | listings named only by an address are out of scope | rejects other erroneous entries, e.g. a foreign-language placeholder at a company's address ("Super tanie jedzenie") |
 | **Scale plausibility** | multi-site companies are flagged; national chains are excluded from peer medians | rejects a national company as the operator of a single venue (a brewery behind the "Švyturys" bar name); accepts chains (H2Auto, Inter Cars, Carglass) knowing their figures cover every location |
@@ -58,7 +58,8 @@ automated and what the analyst adds when automation cannot decide.
 in `link_overrides.csv`, so it applies to every future run.
 
 Candidates for automating level 4:
-- **Phone match:** Google phone vs the phone on the business's own website.
+- **Phone match:** only with a licensed or official source of company phone numbers; the open
+  registers do not publish them and directories forbid scraping.
 - **Deeper website scans** that always fetch the privacy-policy page: the scanner currently stops
   after 4 pages, which is why Synth still needed an override.
 

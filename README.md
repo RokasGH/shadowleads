@@ -132,8 +132,10 @@ never confirm a link on their own.
 
 ### Scoring: "declares far less than peers who look equally busy"
 - **Visible activity:** the **lifetime** Google review count across the company's Vilnius places,
-  divided by its years active (from the later of its registration and 2015, between 1 and 10
-  years). It is an average, not a count of reviews in a given year: the Places API returns only the
+  divided by its years active. Years active = time since the company's registration date in the
+  JAR register, at least 1 and at most 10 years. The cap reflects that Google reviews only became
+  common in the mid-2010s, so a company registered in 1995 counts as active for 10 years. The
+  result is an average, not a count of reviews in a given year: the Places API returns only the
   lifetime total.
   A company is "busy" if it is at or above the category's 75th percentile of *all* Google places.
   Very low or very high ratings must reach the 90th percentile: they attract disproportionate
@@ -147,10 +149,17 @@ never confirm a link on their own.
   - latest filed revenue, with its fiscal year shown (0.2).
 - **Secondary ratios:** reviews per €1k of taxes and per €1k of revenue, and insured persons per 100
   reviews. Near-zero values are clamped to a floor so the ratios can't explode.
-- **Corroborating signals:**
-  - near-zero declared figures;
-  - opening hours that need more staff than declared;
-  - no VAT registration while peers turn over more than €45k.
+- **Corroborating signals** (independent of the score, at least one is needed for Priority A):
+  - **Near-zero declared figures:** VMI taxes under €500, or revenue under €5,000, for the year.
+  - **Staffing floor:** the company's busiest place is open more hours a week than its declared
+    staff could cover. Weekly opening hours ÷ 40 (one full-time week) is the minimum number of
+    full-time people needed to have one person on site whenever it is open. The signal fires when
+    that minimum exceeds the company's average insured people over the last 12 months **plus one**.
+    The extra person allows for the owner or a manager working without being insured. Example: open
+    84 h/week → 2.1 people needed; a company with 1 insured person on average (1 + 1 = 2) triggers
+    it. Not applied to MB/IĮ (owners work without being employees) or to self-service car washes.
+  - **VAT gap:** the company is not VAT-registered, although its peers' median revenue is above the
+    €45,000 VAT registration threshold.
 
 ### Trust: the cost of a wrong lead
 Priority A is capped at 20 per month (the analyst's capacity) and requires *all* of:
@@ -160,7 +169,10 @@ Priority A is capped at 20 per month (the analyst's capacity) and requires *all*
 - an entity at least 12 months old, with a VMI record (missing data is never treated as zero;
   companies whose 2025 tax row is not published yet are scored on their 2024 taxes, shown as
   `taxes_year` and stated in the lead explanation);
-- at least one corroborating signal (two if the rating is extreme).
+- at least one corroborating signal, or two if the rating is **extreme**: a review-weighted
+  average of 3.5 or lower, or 4.8 or higher. Very unhappy or very enthusiastic customers leave
+  reviews more often than average ones, so such review counts overstate how busy a place is and
+  need extra evidence.
 
 Every other entity gets a tier and a stated `hold_reason`. Each lead also shows the legitimate
 explanations typical of its category (chair rental, family labour, group staffing). 18 data-quality
@@ -213,9 +225,15 @@ uv run shadowleads run          # needs GOOGLE_MAPS_API_KEY (+ OXYLABS_* optiona
 uv run streamlit run app/streamlit_app.py
 ```
 
-**Committed example:** `examples/<month>/` holds the tables of a real run as Parquet, restricted
-to the companies in the lead list. Company names and codes are public register data and are kept
-as they are. Raw Google API payloads are not committed.
+**Committed example:** `examples/<month>/` holds the tables of a real run as Parquet:
+- every Google place of the snapshot and how each was (or was not) linked;
+- every **scored** company: all four tiers, not only Priority A and the watchlist;
+- those companies' official records (VMI taxes, Sodra months, revenue, VMVT premises, VMI branches).
+
+It leaves out the national registers themselves (230k companies, 3M Sodra rows) and the raw Google
+API payloads. Company names and codes are public register data and are kept as they are. Docker's
+demo mode loads exactly this into its own warehouse, which is why the SQL console there also shows
+companies that were scored but not flagged.
 
 ## Repository layout
 ```
@@ -251,8 +269,18 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 - **Storage:** keep DuckDB as the compute engine, but write each monthly snapshot as Parquet /
   Iceberg tables partitioned by `run_month` on object storage. That gives cheap long history, schema
   evolution and time travel.
-- **Multiple writers:** analyst decisions move into Postgres, the OLTP side. DuckDB has one writer
-  at a time and no user accounts.
+- **Where DuckDB falls short** (and what would replace it):
+  - one writer process at a time, which also blocks readers while it writes: fine for a monthly
+    batch with a read-only app, not for analysts recording decisions;
+  - no users, roles or permissions: access is whoever can read the file;
+  - no server, so remote clients and BI tools need a copy of the file;
+  - history grows in one file, with no time travel or cheap tiered storage.
+
+  Replacements: analyst decisions and app state in **Postgres** (OLTP, multi-user, permissions,
+  audit trail). Monthly snapshots as **Parquet / Iceberg** tables on object storage (cheap history,
+  time travel, schema evolution), queried by DuckDB, Trino or Athena. Hosted options such as
+  MotherDuck, or DuckLake (DuckDB's lakehouse format with a shared catalog), keep the DuckDB engine
+  with multi-user access.
 - **Orchestration:** a monthly cron job on any Linux VM with Docker is enough to start; move to an
   orchestrator (Dagster, Airflow, Prefect) when per-step retries, backfills and alerting are needed.
 - **Transformations:** the SQL models (`sql/core_*`, `sql/mart_*`) would move to dbt or SQLMesh for
@@ -353,14 +381,21 @@ tests/       Hypothesis property tests, parser/rule regressions, app smoke tests
 **Cost**
 - Bulk downloads instead of per-company API calls (all official sources); every Google and Oxylabs
   response cached; budget ledger per provider.
-- **Optimised Google retrieval.** The Places API bills per request (up to 20 places each), so dense
-  areas are cheap per place and sparse ones are not. The previous sweep shows how many places each
-  map cell holds, so later runs can be planned instead of rediscovered:
-  - **Monthly:** refresh only the places that matter (leads, watchlist, near-threshold companies, a
-    few hundred places) by `place_id`.
-  - **Dense cells:** re-sweep the high-activity cells (city centres, shopping streets) monthly to
-    catch new venues.
-  - **Everything else:** a full discovery sweep quarterly.
+- **Refresh the places that matter by `place_id` (do first).** Every place's `place_id` is stored,
+  and Place Details refreshes one place per call. Re-checking leads, the watchlist and
+  near-threshold companies monthly is a few hundred calls, within the free 1,000 Enterprise Details
+  calls a month. The full discovery sweep (which finds new and closed places) can then run
+  quarterly instead of monthly.
+- **Plan sweeps by density (lower priority, more complex).** The Places API bills per request (up to
+  20 places each), so dense areas are cheap per place and sparse ones are not. Google does not tell
+  you a cell's density without a call, but there are free priors:
+  - the previous sweep records how many places each cell held (`stg.google_sweep`);
+  - open data (VMVT food premises, OpenStreetMap points of interest) shows where businesses
+    cluster.
+
+  Later sweeps could re-query dense, high-activity cells (city centres, shopping streets) monthly
+  and the rest less often. This needs cell-level scheduling and state, so it comes after the
+  `place_id` refresh.
 - **Scraping is the cheaper path, and it is legitimate here:**
   - Google search and Maps local results (via Oxylabs or similar) show the same names, ratings and
     review counts, at roughly $0.50 per 1,000 results, against ~$35 per 1,000 Places API calls.

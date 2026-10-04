@@ -42,7 +42,8 @@ CREATE OR REPLACE TEMP TABLE _base AS
 SELECT
     ea.*,
     c.*,
-    -- visible activity: reviews per active year (Google-review era ~2015; 1..10 years)
+    -- visible activity: reviews per active year; years active = since JAR registration, 1..10 years
+    -- (the 2015 floor below no longer binds: 10 years before the 2026 snapshots is 2016)
     greatest(1.0, least(10.0, date_diff('day',
         greatest(coalesce(ea.registered_on, DATE '2015-01-01'), DATE '2015-01-01'),
         CAST(ea.run_month || '-01' AS DATE)) / 365.25))                          AS years_active,
